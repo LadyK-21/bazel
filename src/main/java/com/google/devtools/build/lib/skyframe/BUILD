@@ -156,6 +156,7 @@ java_library(
         ":package_lookup_function",
         ":package_lookup_value",
         ":package_progress_receiver",
+        ":package_roots_no_symlink_creation",
         ":package_value",
         ":pattern_expanding_error",
         ":precomputed_function",
@@ -167,7 +168,7 @@ java_library(
         ":prerequisite_package_function",
         ":progress_event_suppressing_environment",
         ":project_files_lookup_function",
-        ":project_owned_code_paths_function",
+        ":project_function",
         ":recursive_filesystem_traversal",
         ":recursive_package_provider_backed_target_pattern_resolver",
         ":recursive_pkg_function",
@@ -1175,10 +1176,11 @@ java_library(
 )
 
 java_library(
-    name = "project_owned_code_paths_function",
-    srcs = ["ProjectOwnedCodePathsFunction.java"],
+    name = "project_function",
+    srcs = ["ProjectFunction.java"],
     deps = [
-        ":project_owned_code_paths_value",
+        ":project_value",
+        "//src/main/java/com/google/devtools/build/lib/skyframe:bzl_load_failed_exception",
         "//src/main/java/com/google/devtools/build/lib/skyframe:bzl_load_value",
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
         "//third_party:guava",
@@ -1187,13 +1189,14 @@ java_library(
 )
 
 java_library(
-    name = "project_owned_code_paths_value",
-    srcs = ["ProjectOwnedCodePathsValue.java"],
+    name = "project_value",
+    srcs = ["ProjectValue.java"],
     deps = [
         ":sky_functions",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
         "//third_party:guava",
+        "//third_party:jsr305",
     ],
 )
 
@@ -2548,6 +2551,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/cmdline",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
+        "//third_party:auto_value",
         "//third_party:guava",
         "//third_party:jsr305",
     ],
@@ -2573,12 +2577,12 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/io:inconsistent_filesystem_exception",
         "//src/main/java/com/google/devtools/build/lib/pkgcache",
         "//src/main/java/com/google/devtools/build/lib/profiler",
-        "//src/main/java/com/google/devtools/build/lib/util:pair",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/build/lib/vfs:pathfragment",
         "//src/main/java/com/google/devtools/build/skyframe",
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
         "//third_party:guava",
+        "//third_party:jsr305",
     ],
 )
 
@@ -2854,7 +2858,7 @@ java_library(
     deps = [
         "//src/main/java/com/google/devtools/build/lib/actions:action_lookup_key",
         "//src/main/java/com/google/devtools/build/lib/analysis:top_level_artifact_context",
-        "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
+        "//src/main/java/com/google/devtools/build/skyframe:execution_phase_skykey",
     ],
 )
 
