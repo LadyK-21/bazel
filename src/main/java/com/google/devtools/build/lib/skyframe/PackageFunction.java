@@ -324,7 +324,7 @@ public abstract class PackageFunction implements SkyFunction {
           .setMessage(
               "//external package is not available since the WORKSPACE file is disabled, please"
                   + " migrate to Bzlmod or temporarily enable WORKSPACE via --enable_workspace. See"
-                  + " https://github.com/bazelbuild/bazel/issues/23023.")
+                  + " https://bazel.build/external/migration#bind-targets.")
           .setPackageLoadingCode(PackageLoading.Code.WORKSPACE_FILE_ERROR)
           .build();
     }
@@ -462,7 +462,7 @@ public abstract class PackageFunction implements SkyFunction {
     StarlarkBuiltinsValue starlarkBuiltinsValue;
     try {
       // Bazel: we do autoloads for all BUILD files if enabled
-      AutoloadSymbols autoloadSymbols = PrecomputedValue.AUTOLOAD_SYMBOLS.get(env);
+      AutoloadSymbols autoloadSymbols = AutoloadSymbols.AUTOLOAD_SYMBOLS.get(env);
       if (autoloadSymbols == null) {
         return null;
       }
@@ -1128,9 +1128,9 @@ public abstract class PackageFunction implements SkyFunction {
               configSettingVisibilityPolicy,
               globber);
 
-      pkgBuilder
-          .mergePackageArgsFrom(PackageArgs.builder().setDefaultVisibility(defaultVisibility))
-          .mergePackageArgsFrom(repoFileValue.packageArgs());
+      pkgBuilder.mergePackageArgsFrom(
+          PackageArgs.builder().setDefaultVisibility(defaultVisibility));
+      pkgBuilder.mergePackageArgsFrom(repoFileValue.packageArgs());
 
       if (compiled.ok()) {
         packageFactory.executeBuildFile(

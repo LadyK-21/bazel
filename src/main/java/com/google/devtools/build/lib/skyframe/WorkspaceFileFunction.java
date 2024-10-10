@@ -38,7 +38,7 @@ import com.google.devtools.build.lib.packages.NoSuchPackageException;
 import com.google.devtools.build.lib.packages.Package;
 import com.google.devtools.build.lib.packages.PackageFactory;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
-import com.google.devtools.build.lib.packages.TargetDefinitionContext.NameConflictException;
+import com.google.devtools.build.lib.packages.TargetRecorder.NameConflictException;
 import com.google.devtools.build.lib.packages.WorkspaceFactory;
 import com.google.devtools.build.lib.packages.WorkspaceFileValue;
 import com.google.devtools.build.lib.packages.WorkspaceFileValue.WorkspaceFileKey;
@@ -105,8 +105,8 @@ public class WorkspaceFileFunction implements SkyFunction {
       env.getListener()
           .handle(
               Event.warn(
-                  "WORKSPACE support will be removed in Bazel 9, please migrate to Bzlmod, see"
-                      + " https://github.com/bazelbuild/bazel/issues/23023."));
+                  "WORKSPACE support will be removed in Bazel 9 (late 2025), please migrate to"
+                      + " Bzlmod, see https://bazel.build/external/migration."));
     }
 
     RootedPath workspaceFile = key.getPath();

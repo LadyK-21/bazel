@@ -56,13 +56,6 @@ msys*)
   ;;
 esac
 
-if "$is_windows"; then
-  # Disable MSYS path conversion that converts path-looking command arguments to
-  # Windows paths (even if they arguments are not in fact paths).
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
-fi
-
 source "$(rlocation "io_bazel/src/test/shell/bazel/remote_helpers.sh")" \
   || { echo "remote_helpers.sh not found!" >&2; exit 1; }
 
@@ -2334,7 +2327,9 @@ EOF
   expect_log "Failed to download repository @.*: download is disabled"
 }
 
-function test_disable_download_should_allow_distdir() {
+# The test is disabled because it downlaods rules_python, used in rules_suffix.WORKSPACE
+# while we can mock_rules_java_to_avoid_downloading, we can't rules_python
+function disabled_test_disable_download_should_allow_distdir() {
   mkdir x
   echo 'exports_files(["file.txt"])' > x/BUILD
   echo 'Hello World' > x/file.txt
@@ -2362,10 +2357,12 @@ genrule(
 EOF
 
   # for some reason --repository_disable_download fails with bzlmod trying to download @platforms.
-  bazel build --distdir="." --repository_disable_download --repository_cache= --enable_workspace --noenable_bzlmod //:it || fail "Failed to build"
+  bazel build --distdir="." --repository_disable_download --repository_cache= --enable_workspace --noenable_bzlmod --incompatible_autoload_externally= //:it || fail "Failed to build"
 }
 
-function test_disable_download_should_allow_local_repository() {
+# The test is disabled because it downlaods rules_python, used in rules_suffix.WORKSPACE
+# while we can mock_rules_java_to_avoid_downloading, we can't rules_python
+function disabled_test_disable_download_should_allow_local_repository() {
   mkdir x
   echo 'exports_files(["file.txt"])' > x/BUILD
   echo 'Hello World' > x/file.txt
@@ -2389,7 +2386,7 @@ genrule(
 )
 EOF
   # for some reason --repository_disable_download fails with bzlmod trying to download @platforms.
-  bazel build --repository_disable_download --enable_workspace --noenable_bzlmod //:it || fail "Failed to build"
+  bazel build --repository_disable_download --enable_workspace --noenable_bzlmod --incompatible_autoload_externally= //:it || fail "Failed to build"
 }
 
 function test_no_restarts_fetching_with_worker_thread() {
@@ -2864,6 +2861,98 @@ EOF
   expect_log "I see: something"
 }
 
+function test_incompatible_no_implicit_watch_label() {
+  # when reading a file through a label with watch="no", we should not watch it.
+  local outside_dir="${TEST_TMPDIR}/outside_dir"
+  mkdir -p "${outside_dir}"
+  echo nothing > ${outside_dir}/data.txt
+
+  create_new_workspace
+  cat > $(setup_module_dot_bazel) <<EOF
+foo = use_repo_rule("//:r.bzl", "foo")
+foo(name = "foo")
+bar = use_repo_rule("//:r.bzl", "bar")
+bar(name = "bar", data = "fire")
+EOF
+  touch BUILD
+  cat > r.bzl <<EOF
+def _foo(rctx):
+  rctx.file("BUILD", "filegroup(name='foo')")
+  # Resolve both through rctx.path and directly.
+  label = Label("@bar//subpkg:data.txt")
+  print("(path) I see: " + rctx.read(rctx.path(label), watch="no"))
+  print("(direct) I see: " + rctx.read(label, watch="no"))
+foo=repository_rule(_foo)
+def _bar(rctx):
+  rctx.file("subpkg/BUILD")
+  rctx.file("subpkg/data.txt", rctx.attr.data)
+bar=repository_rule(_bar, attrs={"data":attr.string()})
+EOF
+
+  bazel build --incompatible_no_implicit_watch_label @foo >& $TEST_log || fail "expected bazel to succeed"
+  expect_log "(path) I see: fire"
+  expect_log "(direct) I see: fire"
+
+  # Running Bazel again shouldn't cause a refetch.
+  bazel build --incompatible_no_implicit_watch_label @foo >& $TEST_log || fail "expected bazel to succeed"
+  expect_not_log "I see:"
+
+  # Even changing the file shouldn't cause a refetch.
+  cat > MODULE.bazel <<EOF
+foo = use_repo_rule("//:r.bzl", "foo")
+foo(name = "foo")
+bar = use_repo_rule("//:r.bzl", "bar")
+bar(name = "bar", data = "nothing")
+EOF
+  bazel build --incompatible_no_implicit_watch_label @foo >& $TEST_log || fail "expected bazel to succeed"
+  expect_not_log "I see:"
+}
+
+function test_no_incompatible_no_implicit_watch_label() {
+  # when reading a file through a label with watch="no", we do watch it.
+  local outside_dir="${TEST_TMPDIR}/outside_dir"
+  mkdir -p "${outside_dir}"
+  echo nothing > ${outside_dir}/data.txt
+
+  create_new_workspace
+  cat > $(setup_module_dot_bazel) <<EOF
+foo = use_repo_rule("//:r.bzl", "foo")
+foo(name = "foo")
+bar = use_repo_rule("//:r.bzl", "bar")
+bar(name = "bar", data = "fire")
+EOF
+  touch BUILD
+  cat > r.bzl <<EOF
+def _foo(rctx):
+  rctx.file("BUILD", "filegroup(name='foo')")
+  # Resolve both through rctx.path and directly.
+  label = Label("@bar//subpkg:data.txt")
+  print("(direct) I see: " + rctx.read(label, watch="no"))
+foo=repository_rule(_foo)
+def _bar(rctx):
+  rctx.file("subpkg/BUILD")
+  rctx.file("subpkg/data.txt", rctx.attr.data)
+bar=repository_rule(_bar, attrs={"data":attr.string()})
+EOF
+
+  bazel build --noincompatible_no_implicit_watch_label @foo >& $TEST_log || fail "expected bazel to succeed"
+  expect_log "(direct) I see: fire"
+
+  # Running Bazel again shouldn't cause a refetch.
+  bazel build --noincompatible_no_implicit_watch_label @foo >& $TEST_log || fail "expected bazel to succeed"
+  expect_not_log "I see:"
+
+  # Changing the file should cause a refetch.
+  cat > MODULE.bazel <<EOF
+foo = use_repo_rule("//:r.bzl", "foo")
+foo(name = "foo")
+bar = use_repo_rule("//:r.bzl", "bar")
+bar(name = "bar", data = "nothing")
+EOF
+  bazel build --noincompatible_no_implicit_watch_label @foo >& $TEST_log || fail "expected bazel to succeed"
+  expect_log "I see:"
+}
+
 function test_bad_marker_file_ignored() {
   # when reading a file in another repo, we should watch it.
   local outside_dir="${TEST_TMPDIR}/outside_dir"
@@ -2897,6 +2986,14 @@ EOF
   local marker_file=$(bazel info output_base)/external/@+_repo_rules+foo.marker
   # the marker file for this repo should contain a reference to "@@+_repo_rules+bar". Mangle that.
   sed -i'' -e 's/@@+_repo_rules+bar/@@LOL@@LOL/g' ${marker_file}
+
+  # Running Bazel again shouldn't crash, and should result in a refetch.
+  bazel shutdown
+  bazel build @foo >& $TEST_log || fail "expected bazel to succeed"
+  expect_log "I see: nothing"
+
+  # Test to clear the marker file.
+  echo > ${marker_file}
 
   # Running Bazel again shouldn't crash, and should result in a refetch.
   bazel shutdown
@@ -3307,8 +3404,7 @@ EOF
   # now build both //blarg and @r. The latter depends on the former, which is in error.
   # with --keep_going, this could result in a deadlock.
   bazel build --keep_going //blarg @r >& $TEST_log && fail "bazel somehow succeeded"
-  # the fact that the invocation didn't time out should suffice as success.
-  true
+  expect_log "no such package 'blarg': Symlink cycle detected while trying to find BUILD file"
 }
 
 function test_legacy_label_print() {

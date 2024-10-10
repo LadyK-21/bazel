@@ -51,11 +51,6 @@ msys*|mingw*|cygwin*)
   ;;
 esac
 
-if "$is_windows"; then
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
-fi
-
 #### HELPER FUNCTIONS ##################################################
 
 if ! type try_with_timeout >&/dev/null; then
@@ -152,6 +147,7 @@ Genrule=+requires-a,CppCompile=+requires-b,CppCompile=+requires-c \
 function test_modify_execution_info_various_types() {
   if [[ "$PRODUCT_NAME" = "bazel" ]]; then
     add_rules_python "MODULE.bazel"
+    add_protobuf "MODULE.bazel"
   fi
   local pkg="${FUNCNAME[0]}"
   mkdir -p "$pkg" || fail "mkdir -p $pkg"

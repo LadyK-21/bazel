@@ -14,8 +14,9 @@
 package com.google.devtools.build.lib.skyframe;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static com.google.devtools.build.lib.skyframe.DependencyResolver.createDefaultToolchainContextKey;
 import static com.google.devtools.build.lib.skyframe.DependencyResolver.getPrioritizedDetailedExitCode;
+import static com.google.devtools.build.lib.skyframe.SkyValueRetrieverUtils.maybeFetchSkyValueRemotely;
+import static com.google.devtools.build.lib.skyframe.serialization.SkyValueRetriever.INITIAL_STATE;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -85,6 +86,12 @@ import com.google.devtools.build.lib.profiler.memory.CurrentRuleTracker;
 import com.google.devtools.build.lib.skyframe.AspectKeyCreator.AspectKey;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor.BuildViewProvider;
 import com.google.devtools.build.lib.skyframe.config.BuildConfigurationKey;
+import com.google.devtools.build.lib.skyframe.serialization.SkyValueRetriever;
+import com.google.devtools.build.lib.skyframe.serialization.SkyValueRetriever.RetrievalResult;
+import com.google.devtools.build.lib.skyframe.serialization.SkyValueRetriever.SerializationState;
+import com.google.devtools.build.lib.skyframe.serialization.SkyValueRetriever.SerializationStateProvider;
+import com.google.devtools.build.lib.skyframe.serialization.analysis.RemoteAnalysisCachingDependenciesProvider;
+import com.google.devtools.build.lib.skyframe.toolchains.ToolchainContextUtil;
 import com.google.devtools.build.lib.skyframe.toolchains.ToolchainException;
 import com.google.devtools.build.lib.skyframe.toolchains.UnloadedToolchainContext;
 import com.google.devtools.build.lib.util.OrderedSetMultimap;
@@ -172,7 +179,10 @@ final class AspectFunction implements SkyFunction {
     this.baseTargetPrerequisitesSupplier = baseTargetPrerequisitesSupplier;
   }
 
-  static class State implements SkyKeyComputeState, UnloadedToolchainContextsProducer.ResultSink {
+  static class State
+      implements SkyKeyComputeState,
+          UnloadedToolchainContextsProducer.ResultSink,
+          SerializationStateProvider {
     @Nullable InitialValues initialValues;
 
     final DependencyResolver.State computeDependenciesState;
@@ -195,6 +205,8 @@ final class AspectFunction implements SkyFunction {
     // Will be true if the target doesn't require toolchain resolution.
     boolean baseTargetHasNoToolchains;
 
+    private SerializationState serializationState = INITIAL_STATE;
+
     private State(
         boolean storeTransitivePackages, PrerequisitePackageFunction prerequisitePackages) {
       this.computeDependenciesState =
@@ -213,6 +225,16 @@ final class AspectFunction implements SkyFunction {
     @Override
     public void acceptUnloadedToolchainContextsError(ToolchainException error) {
       this.baseTargetUnloadedToolchainContextsError = error;
+    }
+
+    @Override
+    public SerializationState getSerializationState() {
+      return serializationState;
+    }
+
+    @Override
+    public void setSerializationState(SerializationState state) {
+      this.serializationState = state;
     }
   }
 
@@ -237,6 +259,21 @@ final class AspectFunction implements SkyFunction {
       throws AspectFunctionException, InterruptedException {
     AspectKey key = (AspectKey) skyKey.argument();
     State state = env.getState(() -> new State(storeTransitivePackages, prerequisitePackages));
+
+    RemoteAnalysisCachingDependenciesProvider analysisCachingDeps =
+        buildViewProvider.getSkyframeBuildView().getRemoteAnalysisCachingDependenciesProvider();
+    if (analysisCachingDeps.enabled()) {
+      RetrievalResult retrievalResult =
+          maybeFetchSkyValueRemotely(key, env, analysisCachingDeps, state);
+      switch (retrievalResult) {
+        case SkyValueRetriever.Restart unused:
+          return null;
+        case SkyValueRetriever.RetrievedValue v:
+          return v.value();
+        case SkyValueRetriever.NoCachedData unused:
+          break;
+      }
+    }
 
     DependencyResolver.State computeDependenciesState = state.computeDependenciesState;
     if (state.initialValues == null) {
@@ -384,7 +421,6 @@ final class AspectFunction implements SkyFunction {
               ConfiguredTargetKey.fromConfiguredTarget(associatedTarget),
               topologicalAspectPath,
               buildViewProvider.getSkyframeBuildView().getStarlarkTransitionCache(),
-              buildViewProvider.getSkyframeBuildView().getBuildConfigurationKeyCache(),
               starlarkExecTransition.orElse(null),
               env,
               env.getListener(),
@@ -775,7 +811,6 @@ final class AspectFunction implements SkyFunction {
     return (StarlarkDefinedAspect) starlarkValue;
   }
 
-  @Nullable
   private static UnloadedToolchainContextsInputs getUnloadedToolchainContextsInputs(
       AspectDefinition aspectDefinition,
       @Nullable BuildConfigurationKey configurationKey,
@@ -796,7 +831,7 @@ final class AspectFunction implements SkyFunction {
     // Note: `configuration.getOptions().hasNoConfig()` is handled early in #compute.
     return UnloadedToolchainContextsInputs.create(
         processedExecGroups,
-        createDefaultToolchainContextKey(
+        ToolchainContextUtil.createDefaultToolchainContextKey(
             configurationKey,
             aspectDefinition.execCompatibleWith(),
             /* debugTarget= */ false,
@@ -807,6 +842,7 @@ final class AspectFunction implements SkyFunction {
 
   private static boolean shouldUseAutoExecGroups(
       AspectDefinition aspectDefinition, BuildConfigurationValue configuration) {
+    // TODO: b/370558813 - Use AutoExecGroupsMode for aspects, as well.
     ImmutableMap<String, Attribute> aspectAttributes = aspectDefinition.getAttributes();
     if (aspectAttributes.containsKey("$use_auto_exec_groups")) {
       return (boolean) aspectAttributes.get("$use_auto_exec_groups").getDefaultValueUnchecked();
@@ -891,11 +927,8 @@ final class AspectFunction implements SkyFunction {
                 .addTransitive(real.getTransitivePackages())
                 .build()
             : null;
-    return AspectValue.create(
-        originalKey,
-        aspect,
-        ConfiguredAspect.forAlias(real),
-        transitivePackages);
+    return AspectValue.createForAlias(
+        originalKey, aspect, ConfiguredAspect.forAlias(real), transitivePackages);
   }
 
   private static AspectKey buildAliasAspectKey(
@@ -996,8 +1029,8 @@ final class AspectFunction implements SkyFunction {
       throw new AspectFunctionException(
           new AspectCreationException(msg, key.getLabel(), configuration));
     }
-    Preconditions.checkState(!analysisEnvironment.hasErrors(),
-        "Analysis environment hasError() but no errors reported");
+    Preconditions.checkState(
+        !analysisEnvironment.hasErrors(), "Analysis environment hasError() but no errors reported");
 
     if (env.valuesMissing()) {
       return null;
@@ -1006,11 +1039,7 @@ final class AspectFunction implements SkyFunction {
     analysisEnvironment.disable(associatedTarget);
     Preconditions.checkNotNull(configuredAspect);
 
-    return AspectValue.create(
-        key,
-        aspect,
-        configuredAspect,
-        transitiveState.transitivePackages());
+    return AspectValue.create(key, aspect, configuredAspect, transitiveState.transitivePackages());
   }
 
   private static boolean aspectMatchesConfiguredTarget(

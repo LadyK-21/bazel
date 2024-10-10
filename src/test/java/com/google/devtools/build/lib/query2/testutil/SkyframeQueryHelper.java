@@ -349,6 +349,8 @@ public abstract class SkyframeQueryHelper extends AbstractQueryHelper<Target> {
     buildLanguageOptions.experimentalGoogleLegacyApi = !analysisMock.isThisBazel();
     // TODO(b/256127926): Delete once flipped.
     buildLanguageOptions.experimentalEnableSclDialect = true;
+    buildLanguageOptions.experimentalDormantDeps = true;
+    buildLanguageOptions.incompatibleAutoloadExternally = ImmutableList.of();
 
     ImmutableList<BuildFileName> buildFilesByPriority = skyframeExecutor.getBuildFilesByPriority();
     PathPackageLocator packageLocator =

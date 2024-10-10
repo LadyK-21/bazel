@@ -454,11 +454,8 @@ function test_deferred_download_two_parallel_downloads() {
 
   startup_server "${server_dir}"
 
-  # TODO: https://github.com/bazelbuild/bazel/issues/23234
-  # This test hangs after moving to MODULE.bazel
-  cat > WORKSPACE <<'EOF'
-load("defer.bzl", "defer")
-
+  cat > $(setup_module_dot_bazel) <<'EOF'
+defer = use_repo_rule("//:defer.bzl", "defer")
 defer(name="defer")
 EOF
 
@@ -491,7 +488,7 @@ EOF
   touch BUILD
 
   # Start Bazel
-  bazel query --enable_workspace @defer//:all >& $TEST_log &
+  bazel query @defer//:all >& $TEST_log &
   local bazel_pid=$!
 
   # Wait until the .download() calls return
@@ -515,11 +512,8 @@ EOF
 }
 
 function test_deferred_download_error() {
-  # TODO: https://github.com/bazelbuild/bazel/issues/23234
-  # This test hangs after moving to MODULE.bazel
-  cat > WORKSPACE <<'EOF'
-load("//:defer.bzl", "defer")
-
+  cat > $(setup_module_dot_bazel) <<'EOF'
+defer = use_repo_rule("//:defer.bzl", "defer")
 defer(name="defer")
 EOF
 
@@ -532,7 +526,6 @@ def _defer_impl(rctx):
 
   deferred.wait()
   print("survived wait")
-  rctx.file("WORKSPACE", "")
   rctx.file("BUILD", "filegroup(name='f', srcs=glob(['**']))")
 
 defer = repository_rule(implementation = _defer_impl)
@@ -541,7 +534,7 @@ EOF
   touch BUILD
 
   # Start Bazel
-  bazel query --enable_workspace @defer//:all >& $TEST_log && fail "Bazel unexpectedly succeeded"
+  bazel query @defer//:all >& $TEST_log && fail "Bazel unexpectedly succeeded"
   expect_log "Error downloading.*doesnotexist"
   expect_not_log "survived wait"
 }
@@ -560,10 +553,8 @@ function test_deferred_download_smoke() {
 
   startup_server "${server_dir}"
 
-  # TODO: https://github.com/bazelbuild/bazel/issues/23234
-  # This test hangs after moving to MODULE.bazel
-  cat > WORKSPACE <<'EOF'
-load("defer.bzl", "defer")
+  cat > $(setup_module_dot_bazel) <<'EOF'
+defer = use_repo_rule("//:defer.bzl", "defer")
 defer(name="defer")
 EOF
 
@@ -587,7 +578,7 @@ EOF
   touch BUILD
 
   # Start Bazel
-  bazel query --enable_workspace @defer//:all-targets >& $TEST_log &
+  bazel query @defer//:all-targets >& $TEST_log &
   local bazel_pid=$!
 
   # Wait until the .download() call returns
@@ -1108,22 +1099,6 @@ EOF
   mv MODULE.bazel.tmp MODULE.bazel
   bazel build @x//:catter &> $TEST_log || fail "Build 2 failed"
   assert_contains "def" bazel-genfiles/external/+_repo_rules+x/catter.out
-}
-
-function test_android_sdk_basic_load() {
-  cat >> WORKSPACE <<'EOF' || fail "Couldn't cat"
-android_sdk_repository(
-    name = "androidsdk",
-    path = "/fake/path",
-    api_level = 23,
-    build_tools_version="23.0.0"
-)
-EOF
-
-  bazel query --enable_workspace "//external:androidsdk" 2> "$TEST_log" > "$TEST_TMPDIR/queryout" \
-      || fail "Expected success"
-  cat "$TEST_TMPDIR/queryout" > "$TEST_log"
-  expect_log "//external:androidsdk"
 }
 
 function test_use_bind_as_repository() {

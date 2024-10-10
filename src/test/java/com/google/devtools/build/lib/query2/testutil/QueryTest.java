@@ -398,7 +398,7 @@ public abstract class QueryTest extends AbstractQueryTest<Target> {
         """
         def custom_rule_impl(ctx):
             ftb = depset(ctx.attr._secret_labels)
-            return struct(runfiles = ctx.runfiles(), files = ftb)
+            return DefaultInfo(runfiles = ctx.runfiles(), files = ftb)
 
         def secret_labels_func(prefix, suffix):
             return [
@@ -683,6 +683,35 @@ public abstract class QueryTest extends AbstractQueryTest<Target> {
             + getDependencyCorrectionWithGen(),
         "deps(//foo:out)" + getDependencyCorrectionWithGen(),
         Setting.NO_IMPLICIT_DEPS);
+  }
+
+  @Test
+  public void testDormantDepsAreReturned() throws Exception {
+    writeFile(
+        "a/a.bzl",
+        """
+        def _impl(*args):
+          fail("should not be called")
+
+        r = rule(
+          implementation = _impl,
+          dependency_resolution_rule = True,
+          attrs = { "dormant": attr.dormant_label(), "dormant_list": attr.dormant_label_list() })
+        """);
+
+    writeFile(
+        "a/BUILD",
+        """
+        load(":a.bzl", "r")
+        filegroup(name="a")
+        filegroup(name="b1")
+        filegroup(name="b2")
+
+        r(name="r", dormant=":a", dormant_list=[":b1", ":b2"])
+        """);
+
+    assertThat(evalToListOfStrings("deps('//a:r')"))
+        .containsAtLeast("//a:r", "//a:a", "//a:b1", "//a:b2");
   }
 
   protected Iterable<String> targetLabels(Set<Target> targets) {

@@ -717,6 +717,7 @@ public abstract class CcModule
       Object externalIncludes,
       Object virtualToOriginalHeaders,
       Sequence<?> dependentCcCompilationContexts,
+      Sequence<?> exportedDependentCcCompilationContexts,
       Sequence<?> nonCodeInputs,
       Sequence<?> looseHdrsDirsObject,
       String headersCheckingMode,
@@ -788,6 +789,11 @@ public abstract class CcModule
         Depset.cast(virtualToOriginalHeaders, Tuple.class, "virtual_to_original_headers"));
 
     ccCompilationContext.addDependentCcCompilationContexts(
+        Sequence.cast(
+                exportedDependentCcCompilationContexts,
+                CcCompilationContext.class,
+                "exported_dependent_cc_compilation_contexts")
+            .getImmutableList(),
         Sequence.cast(
                 dependentCcCompilationContexts,
                 CcCompilationContext.class,
@@ -2043,6 +2049,8 @@ public abstract class CcModule
       String includePrefix,
       String stripIncludePrefix,
       Sequence<?> userCompileFlags, // <String> expected
+      Sequence<?> conlyFlags, // <String> expected
+      Sequence<?> cxxFlags, // <String> expected
       Sequence<?> ccCompilationContexts, // <CcCompilationContext> expected
       Object implementationCcCompilationContextsObject,
       String name,
@@ -2210,6 +2218,8 @@ public abstract class CcModule
         .setCopts(
             ImmutableList.copyOf(
                 Sequence.cast(userCompileFlags, String.class, "user_compile_flags")))
+        .setConlyopts(ImmutableList.copyOf(Sequence.cast(conlyFlags, String.class, "conly_flags")))
+        .setCxxopts(ImmutableList.copyOf(Sequence.cast(cxxFlags, String.class, "cxx_flags")))
         .addAdditionalCompilationInputs(
             Sequence.cast(additionalInputs, Artifact.class, "additional_inputs"))
         .addAdditionalInputs(nonCompilationAdditionalInputs)

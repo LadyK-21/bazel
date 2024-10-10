@@ -80,7 +80,12 @@ public class BazelDepGraphFunction implements SkyFunction {
         canonicalRepoNameLookup,
         depGraph.values().stream().map(AbridgedModule::from).collect(toImmutableList()),
         extensionUsagesById,
-        extensionUniqueNames.inverse());
+        extensionUniqueNames.inverse(),
+        resolveRepoOverrides(
+            depGraph,
+            extensionUsagesById,
+            extensionUniqueNames.inverse(),
+            canonicalRepoNameLookup));
   }
 
   private static ImmutableTable<ModuleExtensionId, ModuleKey, ModuleExtensionUsage>
@@ -131,7 +136,7 @@ public class BazelDepGraphFunction implements SkyFunction {
     // modules is multiple_version_override.
     ImmutableSet<String> multipleVersionsModules =
         depGraph.keySet().stream()
-            .collect(groupingBy(ModuleKey::getName, counting()))
+            .collect(groupingBy(ModuleKey::name, counting()))
             .entrySet()
             .stream()
             .filter(entry -> entry.getValue() > 1)
@@ -150,7 +155,7 @@ public class BazelDepGraphFunction implements SkyFunction {
         .collect(
             toImmutableBiMap(
                 key ->
-                    multipleVersionsModules.contains(key.getName())
+                    multipleVersionsModules.contains(key.name())
                         ? key.getCanonicalRepoNameWithVersion()
                         : key.getCanonicalRepoNameWithoutVersion(),
                 key -> key));
@@ -188,14 +193,46 @@ public class BazelDepGraphFunction implements SkyFunction {
                     id.getBzlFileLabel().getRepository().getName(),
                     id.getExtensionName(),
                     extensionNameDisambiguator,
-                    isolationKey.getModule().getName(),
-                    isolationKey.getModule().getVersion(),
+                    isolationKey.getModule().name(),
+                    isolationKey.getModule().version(),
                     isolationKey.getUsageExportedName()))
         .orElse(
             id.getBzlFileLabel().getRepository().getName()
                 + "+"
                 + id.getExtensionName()
                 + extensionNameDisambiguator);
+  }
+
+  private static ImmutableTable<ModuleExtensionId, String, RepositoryName> resolveRepoOverrides(
+      ImmutableMap<ModuleKey, Module> depGraph,
+      ImmutableTable<ModuleExtensionId, ModuleKey, ModuleExtensionUsage> extensionUsagesTable,
+      ImmutableMap<ModuleExtensionId, String> extensionUniqueNames,
+      ImmutableBiMap<RepositoryName, ModuleKey> canonicalRepoNameLookup) {
+    RepositoryMapping rootModuleMappingWithoutOverrides =
+        BazelDepGraphValue.getRepositoryMapping(
+            ModuleKey.ROOT,
+            depGraph,
+            extensionUsagesTable,
+            extensionUniqueNames,
+            canonicalRepoNameLookup,
+            // ModuleFileFunction ensures that repos that override other repos are not themselves
+            // overridden, so we can safely pass an empty table here instead of resolving chains
+            // of overrides.
+            ImmutableTable.of());
+    ImmutableTable.Builder<ModuleExtensionId, String, RepositoryName> repoOverridesBuilder =
+        ImmutableTable.builder();
+    for (var extensionId : extensionUsagesTable.rowKeySet()) {
+      var rootUsage = extensionUsagesTable.row(extensionId).get(ModuleKey.ROOT);
+      if (rootUsage != null) {
+        for (var override : rootUsage.getRepoOverrides().entrySet()) {
+          repoOverridesBuilder.put(
+              extensionId,
+              override.getKey(),
+              rootModuleMappingWithoutOverrides.get(override.getValue().overridingRepoName()));
+        }
+      }
+    }
+    return repoOverridesBuilder.buildOrThrow();
   }
 
   static class BazelDepGraphFunctionException extends SkyFunctionException {

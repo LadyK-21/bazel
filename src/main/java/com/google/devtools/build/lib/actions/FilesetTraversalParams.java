@@ -173,9 +173,6 @@ public interface FilesetTraversalParams {
     /** Returns true if the root points to a generated file, symlink or directory. */
     public abstract boolean isGenerated();
 
-    /** Returns true if input symlinks should be dereferenced; false if copied. */
-    public abstract boolean isFollowingSymlinks();
-
     /** Returns the desired behavior when the traversal hits a subpackage. */
     public abstract PackageBoundaryMode getPackageBoundaryMode();
 
@@ -193,7 +190,6 @@ public interface FilesetTraversalParams {
     byte[] getFingerprint() {
       Fingerprint fp = new Fingerprint();
       fp.addPath(getRoot().asPath());
-      fp.addBoolean(isFollowingSymlinks());
       fp.addBoolean(isGenerated());
       fp.addBoolean(isStrictFilesetOutput());
       fp.addBoolean(permitDirectories());
@@ -203,18 +199,12 @@ public interface FilesetTraversalParams {
 
     static DirectTraversal getDirectTraversal(
         DirectTraversalRoot root,
-        boolean followingSymlinks,
         PackageBoundaryMode packageBoundaryMode,
         boolean isStrictFilesetOutput,
         boolean permitSourceDirectories,
         boolean isGenerated) {
       return new AutoValue_FilesetTraversalParams_DirectTraversal(
-          root,
-          isGenerated,
-          followingSymlinks,
-          packageBoundaryMode,
-          isStrictFilesetOutput,
-          permitSourceDirectories);
+          root, isGenerated, packageBoundaryMode, isStrictFilesetOutput, permitSourceDirectories);
     }
   }
 

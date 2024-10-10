@@ -34,11 +34,13 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import build.bazel.remote.execution.v2.ActionCacheUpdateCapabilities;
 import build.bazel.remote.execution.v2.ActionResult;
 import build.bazel.remote.execution.v2.CacheCapabilities;
 import build.bazel.remote.execution.v2.Digest;
 import build.bazel.remote.execution.v2.Directory;
 import build.bazel.remote.execution.v2.DirectoryNode;
+import build.bazel.remote.execution.v2.ExecutionCapabilities;
 import build.bazel.remote.execution.v2.FileNode;
 import build.bazel.remote.execution.v2.NodeProperties;
 import build.bazel.remote.execution.v2.NodeProperty;
@@ -47,6 +49,7 @@ import build.bazel.remote.execution.v2.OutputFile;
 import build.bazel.remote.execution.v2.OutputSymlink;
 import build.bazel.remote.execution.v2.Platform;
 import build.bazel.remote.execution.v2.RequestMetadata;
+import build.bazel.remote.execution.v2.ServerCapabilities;
 import build.bazel.remote.execution.v2.SymlinkAbsolutePathStrategy;
 import build.bazel.remote.execution.v2.SymlinkNode;
 import build.bazel.remote.execution.v2.Tree;
@@ -55,6 +58,7 @@ import com.google.common.collect.ImmutableClassToInstanceMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
 import com.google.common.eventbus.EventBus;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.SettableFuture;
@@ -77,6 +81,7 @@ import com.google.devtools.build.lib.actions.SpawnResult;
 import com.google.devtools.build.lib.actions.SpawnResult.Status;
 import com.google.devtools.build.lib.actions.StaticInputMetadataProvider;
 import com.google.devtools.build.lib.actions.util.ActionsTestUtil;
+import com.google.devtools.build.lib.analysis.SymlinkEntry;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationValue.RunfileSymlinksMode;
 import com.google.devtools.build.lib.clock.JavaClock;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -88,11 +93,11 @@ import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.events.StoredEventHandler;
 import com.google.devtools.build.lib.exec.util.FakeOwner;
 import com.google.devtools.build.lib.exec.util.SpawnBuilder;
+import com.google.devtools.build.lib.remote.CombinedCache.CachedActionResult;
 import com.google.devtools.build.lib.remote.RemoteExecutionService.RemoteActionResult;
 import com.google.devtools.build.lib.remote.RemoteScrubbing.Config;
 import com.google.devtools.build.lib.remote.common.BulkTransferException;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
-import com.google.devtools.build.lib.remote.common.RemoteCacheClient.CachedActionResult;
 import com.google.devtools.build.lib.remote.common.RemoteExecutionClient;
 import com.google.devtools.build.lib.remote.common.RemotePathResolver;
 import com.google.devtools.build.lib.remote.common.RemotePathResolver.DefaultRemotePathResolver;
@@ -130,6 +135,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.annotation.Nullable;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -154,16 +160,39 @@ public class RemoteExecutionServiceTest {
   private final Reporter reporter = new Reporter(new EventBus());
   private final StoredEventHandler eventHandler = new StoredEventHandler();
 
+  private final CacheCapabilities cacheCapabilities =
+      CacheCapabilities.newBuilder()
+          .setActionCacheUpdateCapabilities(
+              ActionCacheUpdateCapabilities.newBuilder().setUpdateEnabled(true).build())
+          .setSymlinkAbsolutePathStrategy(SymlinkAbsolutePathStrategy.Value.ALLOWED)
+          .build();
+  // In the past, Bazel only supports RemoteApi version 2.0.
+  // Use this to ensure we are backward compatible with Servers that only support 2.0.
+  private final ServerCapabilities legacyRemoteExecutorCapabilities =
+      ServerCapabilities.newBuilder()
+          .setCacheCapabilities(cacheCapabilities)
+          .setLowApiVersion(ApiVersion.twoPointZero.toSemVer())
+          .setHighApiVersion(ApiVersion.twoPointZero.toSemVer())
+          .setExecutionCapabilities(ExecutionCapabilities.newBuilder().setExecEnabled(true).build())
+          .build();
+
+  private final ServerCapabilities remoteExecutorCapabilities =
+      ServerCapabilities.newBuilder()
+          .setCacheCapabilities(cacheCapabilities)
+          .setLowApiVersion(ApiVersion.low.toSemVer())
+          .setHighApiVersion(ApiVersion.high.toSemVer())
+          .setExecutionCapabilities(ExecutionCapabilities.newBuilder().setExecEnabled(true).build())
+          .build();
+
   RemoteOptions remoteOptions;
   private FileSystem fs;
   private Path execRoot;
   private ArtifactRoot artifactRoot;
-  private ArtifactRoot middlemanRoot;
   private TempPathGenerator tempPathGenerator;
   private FakeActionInputFileCache fakeFileCache;
   private RemotePathResolver remotePathResolver;
   private FileOutErr outErr;
-  private InMemoryRemoteCache cache;
+  private InMemoryCombinedCache cache;
   private RemoteExecutionClient executor;
   private RemoteActionExecutionContext remoteActionExecutionContext;
 
@@ -179,8 +208,6 @@ public class RemoteExecutionServiceTest {
     execRoot.createDirectoryAndParents();
 
     artifactRoot = ArtifactRoot.asDerivedRoot(execRoot, RootType.Output, "outputs");
-    middlemanRoot =
-        ArtifactRoot.asDerivedRoot(execRoot, RootType.Middleman, PathFragment.create("out"));
 
     checkNotNull(artifactRoot.getRoot().asPath()).createDirectoryAndParents();
 
@@ -196,8 +223,11 @@ public class RemoteExecutionServiceTest {
     checkNotNull(stderr.getParentDirectory()).createDirectoryAndParents();
     outErr = new FileOutErr(stdout, stderr);
 
-    cache = spy(new InMemoryRemoteCache(spy(new InMemoryCacheClient()), remoteOptions, digestUtil));
+    cache =
+        spy(new InMemoryCombinedCache(spy(new InMemoryCacheClient()), remoteOptions, digestUtil));
+    doReturn(remoteExecutorCapabilities).when(cache).getRemoteServerCapabilities();
     executor = mock(RemoteExecutionClient.class);
+    when(executor.getServerCapabilities()).thenReturn(remoteExecutorCapabilities);
 
     RequestMetadata metadata =
         TracingMetadataUtils.buildMetadata("none", "none", "action-id", null);
@@ -216,9 +246,28 @@ public class RemoteExecutionServiceTest {
 
     RemoteAction remoteAction = service.buildRemoteAction(spawn, context);
 
-    assertThat(remoteAction.getCommand().getOutputFilesList()).containsExactly(execPath.toString());
-    assertThat(remoteAction.getCommand().getOutputPathsList()).containsExactly(execPath.toString());
+    assertThat(remoteAction.getCommand().getOutputFilesList()).isEmpty();
     assertThat(remoteAction.getCommand().getOutputDirectoriesList()).isEmpty();
+    assertThat(remoteAction.getCommand().getOutputPathsList()).containsExactly(execPath.toString());
+  }
+
+  @Test
+  public void legacy_buildRemoteAction_withRegularFileAsOutput() throws Exception {
+    doReturn(legacyRemoteExecutorCapabilities).when(cache).getRemoteServerCapabilities();
+    when(executor.getServerCapabilities()).thenReturn(legacyRemoteExecutorCapabilities);
+    PathFragment execPath = execRoot.getRelative("path/to/tree").asFragment();
+    Spawn spawn =
+        new SpawnBuilder("dummy")
+            .withOutput(ActionsTestUtil.createArtifactWithExecPath(artifactRoot, execPath))
+            .build();
+    FakeSpawnExecutionContext context = newSpawnExecutionContext(spawn);
+    RemoteExecutionService service = newRemoteExecutionService();
+
+    RemoteAction remoteAction = service.buildRemoteAction(spawn, context);
+
+    assertThat(remoteAction.getCommand().getOutputFilesList()).containsExactly(execPath.toString());
+    assertThat(remoteAction.getCommand().getOutputDirectoriesList()).isEmpty();
+    assertThat(remoteAction.getCommand().getOutputPathsList()).isEmpty();
   }
 
   @Test
@@ -235,7 +284,28 @@ public class RemoteExecutionServiceTest {
     RemoteAction remoteAction = service.buildRemoteAction(spawn, context);
 
     assertThat(remoteAction.getCommand().getOutputFilesList()).isEmpty();
+    assertThat(remoteAction.getCommand().getOutputDirectoriesList()).isEmpty();
+    assertThat(remoteAction.getCommand().getOutputPathsList()).containsExactly("path/to/dir");
+  }
+
+  @Test
+  public void legacy_buildRemoteAction_withTreeArtifactAsOutput() throws Exception {
+    doReturn(legacyRemoteExecutorCapabilities).when(cache).getRemoteServerCapabilities();
+    when(executor.getServerCapabilities()).thenReturn(legacyRemoteExecutorCapabilities);
+    Spawn spawn =
+        new SpawnBuilder("dummy")
+            .withOutput(
+                ActionsTestUtil.createTreeArtifactWithGeneratingAction(
+                    artifactRoot, PathFragment.create("path/to/dir")))
+            .build();
+    FakeSpawnExecutionContext context = newSpawnExecutionContext(spawn);
+    RemoteExecutionService service = newRemoteExecutionService();
+
+    RemoteAction remoteAction = service.buildRemoteAction(spawn, context);
+
+    assertThat(remoteAction.getCommand().getOutputFilesList()).isEmpty();
     assertThat(remoteAction.getCommand().getOutputDirectoriesList()).containsExactly("path/to/dir");
+    assertThat(remoteAction.getCommand().getOutputPathsList()).isEmpty();
   }
 
   @Test
@@ -251,9 +321,29 @@ public class RemoteExecutionServiceTest {
 
     RemoteAction remoteAction = service.buildRemoteAction(spawn, context);
 
-    assertThat(remoteAction.getCommand().getOutputFilesList()).containsExactly("path/to/link");
+    assertThat(remoteAction.getCommand().getOutputFilesList()).isEmpty();
     assertThat(remoteAction.getCommand().getOutputDirectoriesList()).isEmpty();
     assertThat(remoteAction.getCommand().getOutputPathsList()).containsExactly("path/to/link");
+  }
+
+  @Test
+  public void legacy_buildRemoteAction_withUnresolvedSymlinkAsOutput() throws Exception {
+    doReturn(legacyRemoteExecutorCapabilities).when(cache).getRemoteServerCapabilities();
+    when(executor.getServerCapabilities()).thenReturn(legacyRemoteExecutorCapabilities);
+    Spawn spawn =
+        new SpawnBuilder("dummy")
+            .withOutput(
+                ActionsTestUtil.createUnresolvedSymlinkArtifactWithExecPath(
+                    artifactRoot, PathFragment.create("path/to/link")))
+            .build();
+    FakeSpawnExecutionContext context = newSpawnExecutionContext(spawn);
+    RemoteExecutionService service = newRemoteExecutionService();
+
+    RemoteAction remoteAction = service.buildRemoteAction(spawn, context);
+
+    assertThat(remoteAction.getCommand().getOutputFilesList()).containsExactly("path/to/link");
+    assertThat(remoteAction.getCommand().getOutputDirectoriesList()).isEmpty();
+    assertThat(remoteAction.getCommand().getOutputPathsList()).isEmpty();
   }
 
   @Test
@@ -267,8 +357,43 @@ public class RemoteExecutionServiceTest {
 
     RemoteAction remoteAction = service.buildRemoteAction(spawn, context);
 
+    assertThat(remoteAction.getCommand().getOutputFilesList()).isEmpty();
+    assertThat(remoteAction.getCommand().getOutputDirectoriesList()).isEmpty();
+    assertThat(remoteAction.getCommand().getOutputPathsList()).containsExactly("path/to/file");
+  }
+
+  @Test
+  public void legacy_buildRemoteAction_withActionInputFileAsOutput() throws Exception {
+    doReturn(legacyRemoteExecutorCapabilities).when(cache).getRemoteServerCapabilities();
+    when(executor.getServerCapabilities()).thenReturn(legacyRemoteExecutorCapabilities);
+    Spawn spawn =
+        new SpawnBuilder("dummy")
+            .withOutput(ActionInputHelper.fromPath(PathFragment.create("path/to/file")))
+            .build();
+    FakeSpawnExecutionContext context = newSpawnExecutionContext(spawn);
+    RemoteExecutionService service = newRemoteExecutionService();
+
+    RemoteAction remoteAction = service.buildRemoteAction(spawn, context);
+
     assertThat(remoteAction.getCommand().getOutputFilesList()).containsExactly("path/to/file");
     assertThat(remoteAction.getCommand().getOutputDirectoriesList()).isEmpty();
+    assertThat(remoteAction.getCommand().getOutputPathsList()).isEmpty();
+  }
+
+  @Test
+  public void buildRemoteAction_withActionInputDirectoryAsOutput() throws Exception {
+    Spawn spawn =
+        new SpawnBuilder("dummy")
+            .withOutput(ActionInputHelper.fromPath(PathFragment.create("path/to/dir")))
+            .build();
+    FakeSpawnExecutionContext context = newSpawnExecutionContext(spawn);
+    RemoteExecutionService service = newRemoteExecutionService();
+
+    RemoteAction remoteAction = service.buildRemoteAction(spawn, context);
+
+    assertThat(remoteAction.getCommand().getOutputFilesList()).isEmpty();
+    assertThat(remoteAction.getCommand().getOutputDirectoriesList()).isEmpty();
+    assertThat(remoteAction.getCommand().getOutputPathsList()).containsExactly("path/to/dir");
   }
 
   @Test
@@ -344,15 +469,15 @@ public class RemoteExecutionServiceTest {
   }
 
   @Test
-  public void downloadOutputs_siblingLayoutAndRelativeToInputRoot_works() throws Exception {
+  public void downloadOutputs_siblingLayout() throws Exception {
     // arrange
-    remotePathResolver = new SiblingRepositoryLayoutResolver(execRoot, true);
+    remotePathResolver = new SiblingRepositoryLayoutResolver(execRoot);
 
     Digest fooDigest = cache.addContents(remoteActionExecutionContext, "foo-contents");
     Digest barDigest = cache.addContents(remoteActionExecutionContext, "bar-contents");
     ActionResult.Builder builder = ActionResult.newBuilder();
-    builder.addOutputFilesBuilder().setPath("execroot/outputs/foo").setDigest(fooDigest);
-    builder.addOutputFilesBuilder().setPath("execroot/outputs/bar").setDigest(barDigest);
+    builder.addOutputFilesBuilder().setPath("outputs/foo").setDigest(fooDigest);
+    builder.addOutputFilesBuilder().setPath("outputs/bar").setDigest(barDigest);
     RemoteActionResult result =
         RemoteActionResult.createFromCache(CachedActionResult.remote(builder.build()));
     Spawn spawn = newSpawnFromResult(result);
@@ -1650,7 +1775,7 @@ public class RemoteExecutionServiceTest {
 
     // act
     UploadManifest manifest = service.buildUploadManifest(action, spawnResult);
-    service.uploadOutputs(action, spawnResult, () -> {});
+    uploadOutputsAndWait(service, action, spawnResult);
 
     // assert
     ActionResult.Builder expectedResult = ActionResult.newBuilder();
@@ -1697,7 +1822,7 @@ public class RemoteExecutionServiceTest {
 
     // act
     UploadManifest manifest = service.buildUploadManifest(action, spawnResult);
-    service.uploadOutputs(action, spawnResult, () -> {});
+    uploadOutputsAndWait(service, action, spawnResult);
 
     // assert
     ActionResult.Builder expectedResult = ActionResult.newBuilder();
@@ -1771,7 +1896,7 @@ public class RemoteExecutionServiceTest {
 
     // act
     UploadManifest manifest = service.buildUploadManifest(action, spawnResult);
-    service.uploadOutputs(action, spawnResult, () -> {});
+    uploadOutputsAndWait(service, action, spawnResult);
 
     // assert
     ActionResult.Builder expectedResult = ActionResult.newBuilder();
@@ -1807,7 +1932,7 @@ public class RemoteExecutionServiceTest {
 
     // act
     UploadManifest manifest = service.buildUploadManifest(action, spawnResult);
-    service.uploadOutputs(action, spawnResult, () -> {});
+    uploadOutputsAndWait(service, action, spawnResult);
 
     // assert
     ActionResult.Builder expectedResult = ActionResult.newBuilder();
@@ -1829,12 +1954,6 @@ public class RemoteExecutionServiceTest {
 
   @Test
   public void uploadOutputs_uploadAbsoluteDanglingSymlink() throws Exception {
-    when(cache.getCacheCapabilities())
-        .thenReturn(
-            CacheCapabilities.newBuilder()
-                .setSymlinkAbsolutePathStrategy(SymlinkAbsolutePathStrategy.Value.ALLOWED)
-                .build());
-
     doUploadDanglingSymlink(PathFragment.create("/some/path"));
   }
 
@@ -1859,7 +1978,7 @@ public class RemoteExecutionServiceTest {
             .build();
 
     // act
-    service.uploadOutputs(action, spawnResult, () -> {});
+    uploadOutputsAndWait(service, action, spawnResult);
 
     // assert
     assertThat(
@@ -1885,7 +2004,7 @@ public class RemoteExecutionServiceTest {
         .when(cache)
         .uploadActionResult(any(), any(), any());
 
-    service.uploadOutputs(action, spawnResult, () -> {});
+    uploadOutputsAndWait(service, action, spawnResult);
 
     assertThat(eventHandler.getEvents()).hasSize(1);
     Event evt = eventHandler.getEvents().get(0);
@@ -1910,7 +2029,7 @@ public class RemoteExecutionServiceTest {
             .setRunnerName("test")
             .build();
 
-    service.uploadOutputs(action, spawnResult, () -> {});
+    uploadOutputsAndWait(service, action, spawnResult);
 
     assertThat(eventHandler.getPosts())
         .containsAtLeast(
@@ -1937,7 +2056,7 @@ public class RemoteExecutionServiceTest {
             .setRunnerName("test")
             .build();
 
-    service.uploadOutputs(action, spawnResult, () -> {});
+    uploadOutputsAndWait(service, action, spawnResult);
 
     // assert
     assertThat(cache.getNumFindMissingDigests()).isEmpty();
@@ -2037,7 +2156,7 @@ public class RemoteExecutionServiceTest {
               uploadBlobCalled.countDown();
               return future;
             })
-        .when(cache.cacheProtocol)
+        .when(cache.remoteCacheClient)
         .uploadBlob(any(), any(), any());
     ActionInput input = ActionInputHelper.fromPath("inputs/foo");
     fakeFileCache.createScratchInput(input, "input-foo");
@@ -2099,12 +2218,12 @@ public class RemoteExecutionServiceTest {
         NestedSetBuilder.create(Order.STABLE_ORDER, dummyFile, foo2File);
     fakeFileCache.createScratchInput(foo2File, "foo2");
 
-    ActionInput runfilesMiddleman = ActionsTestUtil.createArtifact(middlemanRoot, "runfiles");
+    ActionInput runfilesArtifact = ActionsTestUtil.createRunfilesArtifact(artifactRoot, "runfiles");
 
     NestedSet<ActionInput> nodeRoot1 =
         new NestedSetBuilder<ActionInput>(Order.STABLE_ORDER)
             .add(dummyFile)
-            .add(runfilesMiddleman)
+            .add(runfilesArtifact)
             .add(tree)
             .addTransitive(nodeBar)
             .addTransitive(nodeFoo1)
@@ -2112,7 +2231,7 @@ public class RemoteExecutionServiceTest {
     NestedSet<ActionInput> nodeRoot2 =
         new NestedSetBuilder<ActionInput>(Order.STABLE_ORDER)
             .add(dummyFile)
-            .add(runfilesMiddleman)
+            .add(runfilesArtifact)
             .add(tree)
             .addTransitive(nodeBar)
             .addTransitive(nodeFoo2)
@@ -2124,7 +2243,7 @@ public class RemoteExecutionServiceTest {
     RunfilesTree runfilesTree =
         createRunfilesTree("tools/tool.runfiles", ImmutableList.of(toolDat));
 
-    fakeFileCache.addRunfilesTree(runfilesMiddleman, runfilesTree);
+    fakeFileCache.addRunfilesTree(runfilesArtifact, runfilesTree);
 
     Spawn spawn1 =
         new SimpleSpawn(
@@ -2374,10 +2493,8 @@ public class RemoteExecutionServiceTest {
         .containsExactly(
             PathFragment.create("outputs/bin/input1"), mappedInput,
             PathFragment.create("outputs/bin/input2"), unmappedInput);
-    assertThat(remoteAction.getCommand().getOutputFilesList())
-        .containsExactly("outputs/bin/dir/output1", "outputs/bin/other_dir/output2");
-    assertThat(remoteAction.getCommand().getOutputDirectoriesList())
-        .containsExactly("outputs/bin/output_dir");
+    assertThat(remoteAction.getCommand().getOutputFilesList()).isEmpty();
+    assertThat(remoteAction.getCommand().getOutputDirectoriesList()).isEmpty();
     assertThat(remoteAction.getCommand().getOutputPathsList())
         .containsExactly(
             "outputs/bin/dir/output1", "outputs/bin/other_dir/output2", "outputs/bin/output_dir");
@@ -2532,7 +2649,8 @@ public class RemoteExecutionServiceTest {
         tempPathGenerator,
         null,
         remoteOutputChecker,
-        outputService);
+        outputService,
+        Sets.newConcurrentHashSet());
   }
 
   private RunfilesTree createRunfilesTree(String root, Collection<Artifact> artifacts) {
@@ -2566,6 +2684,42 @@ public class RemoteExecutionServiceTest {
       public String getWorkspaceName() {
         return "__main__";
       }
+
+      @Override
+      public NestedSet<Artifact> getArtifactsAtCanonicalLocationsForLogging() {
+        return NestedSetBuilder.wrap(Order.STABLE_ORDER, artifacts);
+      }
+
+      @Override
+      public ImmutableList<PathFragment> getEmptyFilenamesForLogging() {
+        return ImmutableList.of();
+      }
+
+      @Override
+      public NestedSet<SymlinkEntry> getSymlinksForLogging() {
+        return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
+      }
+
+      @Override
+      public NestedSet<SymlinkEntry> getRootSymlinksForLogging() {
+        return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
+      }
+
+      @Nullable
+      @Override
+      public Artifact getRepoMappingManifestForLogging() {
+        return null;
+      }
+
+      @Override
+      public boolean isLegacyExternalRunfiles() {
+        return false;
+      }
+
+      @Override
+      public boolean isMappingCached() {
+        return false;
+      }
     };
   }
 
@@ -2577,5 +2731,12 @@ public class RemoteExecutionServiceTest {
       }
       dir.createDirectoryAndParents();
     }
+  }
+
+  private static void uploadOutputsAndWait(
+      RemoteExecutionService service, RemoteAction action, SpawnResult result) throws Exception {
+    SettableFuture<Void> future = SettableFuture.create();
+    service.uploadOutputs(action, result, () -> future.set(null));
+    future.get();
   }
 }

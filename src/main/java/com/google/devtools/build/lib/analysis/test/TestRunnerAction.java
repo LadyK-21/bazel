@@ -22,8 +22,8 @@ import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterators;
 import com.google.common.flogger.GoogleLogger;
@@ -51,7 +51,7 @@ import com.google.devtools.build.lib.analysis.PackageSpecificationProvider;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationValue;
 import com.google.devtools.build.lib.analysis.config.RunUnder;
 import com.google.devtools.build.lib.analysis.test.TestActionContext.AttemptGroup;
-import com.google.devtools.build.lib.analysis.test.TestActionContext.FailedAttemptResult;
+import com.google.devtools.build.lib.analysis.test.TestActionContext.ProcessedAttemptResult;
 import com.google.devtools.build.lib.analysis.test.TestActionContext.TestAttemptResult;
 import com.google.devtools.build.lib.analysis.test.TestActionContext.TestAttemptResult.Result;
 import com.google.devtools.build.lib.analysis.test.TestActionContext.TestRunnerSpawn;
@@ -65,10 +65,11 @@ import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
 import com.google.devtools.build.lib.server.FailureDetails.TestAction;
 import com.google.devtools.build.lib.util.DetailedExitCode;
 import com.google.devtools.build.lib.util.Fingerprint;
-import com.google.devtools.build.lib.util.Pair;
+import com.google.devtools.build.lib.vfs.Dirent;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
+import com.google.devtools.build.lib.vfs.Symlinks;
 import com.google.devtools.build.lib.view.test.TestStatus.TestResultData;
 import com.google.devtools.common.options.TriState;
 import com.google.protobuf.ExtensionRegistry;
@@ -78,8 +79,10 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.time.Duration;
 import java.util.AbstractCollection;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -309,6 +312,10 @@ public class TestRunnerAction extends AbstractAction
     this.isExecutedOnWindows = isExecutedOnWindows;
   }
 
+  public boolean allowLocalTests() {
+    return testConfiguration.allowLocalTests();
+  }
+
   @Override
   public boolean mayModifySpawnOutputsAfterExecution() {
     // Test actions modify test spawn outputs after execution:
@@ -401,76 +408,94 @@ public class TestRunnerAction extends AbstractAction
    * file system for existence of these output files, so it must only be used after test execution.
    */
   // TODO(ulfjack): Instead of going to local disk here, use SpawnResult (add list of files there).
-  public ImmutableList<Pair<String, Path>> getTestOutputsMapping(
-      ArtifactPathResolver resolver, Path execRoot) {
-    ImmutableList.Builder<Pair<String, Path>> builder = ImmutableList.builder();
+  public ImmutableMultimap<String, Path> getTestOutputsMapping(
+      ArtifactPathResolver resolver, Path execRoot) throws IOException {
+    // TODO(tjgq): The existence checks below will incorrectly return false if the test action was
+    // reconstructed from the action cache, as we don't populate the output filesystem on an action
+    // cache hit. This is difficult to fix because some of the files below are produced by test
+    // spawns, but not declared as action outputs, and only the latter are stored in the action
+    // cache.
+    ImmutableMultimap.Builder<String, Path> builder = ImmutableMultimap.builder();
     if (resolver.toPath(getTestLog()).exists()) {
-      builder.add(Pair.of(TestFileNameConstants.TEST_LOG, resolver.toPath(getTestLog())));
+      builder.put(TestFileNameConstants.TEST_LOG, resolver.toPath(getTestLog()));
     }
     if (getCoverageData() != null && resolver.toPath(getCoverageData()).exists()) {
-      builder.add(Pair.of(TestFileNameConstants.TEST_COVERAGE, resolver.toPath(getCoverageData())));
+      builder.put(TestFileNameConstants.TEST_COVERAGE, resolver.toPath(getCoverageData()));
     }
     if (execRoot != null) {
       ResolvedPaths resolvedPaths = resolve(execRoot);
       if (resolvedPaths.getTestStderr().exists()) {
-        builder.add(Pair.of(TestFileNameConstants.TEST_STDERR, resolvedPaths.getTestStderr()));
+        builder.put(TestFileNameConstants.TEST_STDERR, resolvedPaths.getTestStderr());
       }
       if (resolvedPaths.getXmlOutputPath().exists()) {
-        builder.add(Pair.of(TestFileNameConstants.TEST_XML, resolvedPaths.getXmlOutputPath()));
+        builder.put(TestFileNameConstants.TEST_XML, resolvedPaths.getXmlOutputPath());
       }
       if (resolvedPaths.getSplitLogsPath().exists()) {
-        builder.add(Pair.of(TestFileNameConstants.SPLIT_LOGS, resolvedPaths.getSplitLogsPath()));
+        builder.put(TestFileNameConstants.SPLIT_LOGS, resolvedPaths.getSplitLogsPath());
       }
       if (resolvedPaths.getTestWarningsPath().exists()) {
-        builder.add(
-            Pair.of(TestFileNameConstants.TEST_WARNINGS, resolvedPaths.getTestWarningsPath()));
+        builder.put(TestFileNameConstants.TEST_WARNINGS, resolvedPaths.getTestWarningsPath());
       }
       if (testConfiguration.getZipUndeclaredTestOutputs()
           && resolvedPaths.getUndeclaredOutputsZipPath().exists()) {
-        builder.add(
-            Pair.of(
-                TestFileNameConstants.UNDECLARED_OUTPUTS_ZIP,
-                resolvedPaths.getUndeclaredOutputsZipPath()));
+        builder.put(
+            TestFileNameConstants.UNDECLARED_OUTPUTS_ZIP,
+            resolvedPaths.getUndeclaredOutputsZipPath());
       }
       if (!testConfiguration.getZipUndeclaredTestOutputs()
           && resolvedPaths.getUndeclaredOutputsDir().exists()) {
-        builder.add(
-            Pair.of(
-                TestFileNameConstants.UNDECLARED_OUTPUTS_DIR,
-                resolvedPaths.getUndeclaredOutputsDir()));
+        addAllFilesInUndeclaredOutputsDirectory(builder, resolvedPaths.getUndeclaredOutputsDir());
       }
       if (resolvedPaths.getUndeclaredOutputsManifestPath().exists()) {
-        builder.add(
-            Pair.of(
-                TestFileNameConstants.UNDECLARED_OUTPUTS_MANIFEST,
-                resolvedPaths.getUndeclaredOutputsManifestPath()));
+        builder.put(
+            TestFileNameConstants.UNDECLARED_OUTPUTS_MANIFEST,
+            resolvedPaths.getUndeclaredOutputsManifestPath());
       }
       if (resolvedPaths.getUndeclaredOutputsAnnotationsPath().exists()) {
-        builder.add(
-            Pair.of(
-                TestFileNameConstants.UNDECLARED_OUTPUTS_ANNOTATIONS,
-                resolvedPaths.getUndeclaredOutputsAnnotationsPath()));
+        builder.put(
+            TestFileNameConstants.UNDECLARED_OUTPUTS_ANNOTATIONS,
+            resolvedPaths.getUndeclaredOutputsAnnotationsPath());
       }
       if (resolvedPaths.getUndeclaredOutputsAnnotationsPbPath().exists()) {
-        builder.add(
-            Pair.of(
-                TestFileNameConstants.UNDECLARED_OUTPUTS_ANNOTATIONS_PB,
-                resolvedPaths.getUndeclaredOutputsAnnotationsPbPath()));
+        builder.put(
+            TestFileNameConstants.UNDECLARED_OUTPUTS_ANNOTATIONS_PB,
+            resolvedPaths.getUndeclaredOutputsAnnotationsPbPath());
       }
       if (resolvedPaths.getUnusedRunfilesLogPath().exists()) {
-        builder.add(
-            Pair.of(
-                TestFileNameConstants.UNUSED_RUNFILES_LOG,
-                resolvedPaths.getUnusedRunfilesLogPath()));
+        builder.put(
+            TestFileNameConstants.UNUSED_RUNFILES_LOG, resolvedPaths.getUnusedRunfilesLogPath());
       }
       if (resolvedPaths.getInfrastructureFailureFile().exists()) {
-        builder.add(
-            Pair.of(
-                TestFileNameConstants.TEST_INFRASTRUCTURE_FAILURE,
-                resolvedPaths.getInfrastructureFailureFile()));
+        builder.put(
+            TestFileNameConstants.TEST_INFRASTRUCTURE_FAILURE,
+            resolvedPaths.getInfrastructureFailureFile());
       }
     }
     return builder.build();
+  }
+
+  private static void addAllFilesInUndeclaredOutputsDirectory(
+      ImmutableMultimap.Builder<String, Path> builder, Path undeclaredOutputsDir)
+      throws IOException {
+    ArrayDeque<Path> dirsToVisit = new ArrayDeque<>();
+    dirsToVisit.add(undeclaredOutputsDir);
+    while (!dirsToVisit.isEmpty()) {
+      Path dir = dirsToVisit.pop();
+      List<Dirent> sortedEntries = new ArrayList<>(dir.readdir(Symlinks.FOLLOW));
+      sortedEntries.sort(Comparator.comparing(Dirent::getName));
+      for (Dirent dirent : sortedEntries) {
+        Path child = dir.getChild(dirent.getName());
+        if (dirent.getType().equals(Dirent.Type.DIRECTORY)) {
+          dirsToVisit.add(child);
+        } else if (dirent.getType().equals(Dirent.Type.FILE)) {
+          String name =
+              TestFileNameConstants.UNDECLARED_OUTPUTS_DIR
+                  + "/"
+                  + child.relativeTo(undeclaredOutputsDir);
+          builder.put(name, child);
+        }
+      }
+    }
   }
 
   // Test actions are always distinguished by their target name, which must be unique.
@@ -643,12 +668,15 @@ public class TestRunnerAction extends AbstractAction
       return false;
     }
     try {
+      ImmutableMultimap<String, Path> testOutputs =
+          getTestOutputsMapping(executor.getPathResolver(), executor.getExecRoot());
       executor
           .getEventHandler()
           .post(
               executor
                   .getContext(TestActionContext.class)
-                  .newCachedTestResult(executor.getExecRoot(), this, cachedTestResultData.get()));
+                  .newCachedTestResult(
+                      executor.getExecRoot(), this, cachedTestResultData.get(), testOutputs));
     } catch (IOException e) {
       logger.atInfo().log("%s", getErrorMessageOnNewCachedTestResultError(e.getMessage()));
       executor
@@ -972,7 +1000,7 @@ public class TestRunnerAction extends AbstractAction
       throws ActionExecutionException, InterruptedException {
 
     List<SpawnResult> spawnResults = new ArrayList<>();
-    List<FailedAttemptResult> failedAttempts = new ArrayList<>();
+    List<ProcessedAttemptResult> failedAttempts = new ArrayList<>();
     TestRunnerSpawn testRunnerSpawn = null;
     AttemptGroup attemptGroup = null;
 
@@ -1169,7 +1197,7 @@ public class TestRunnerAction extends AbstractAction
       boolean keepGoing,
       final AttemptGroup attemptGroup,
       List<SpawnResult> spawnResults,
-      List<FailedAttemptResult> failedAttempts)
+      List<ProcessedAttemptResult> failedAttempts)
       throws ExecException, IOException, InterruptedException {
     int maxAttempts = 0;
 

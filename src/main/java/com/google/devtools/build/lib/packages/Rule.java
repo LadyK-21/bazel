@@ -540,6 +540,10 @@ public class Rule implements Target, DependencyFilter.AttributeInfoProvider {
       // compute the value.
       return isFrozen() ? attr.getDefaultValue(this) : null;
     }
+    if (attr.isMaterializing()) {
+      checkState(isFrozen(), "Mutable rule missing LateBoundDefault");
+      return attr.getMaterializer();
+    }
     if (attr.isLateBound()) {
       // Frozen rules don't store late bound defaults.
       checkState(isFrozen(), "Mutable rule missing LateBoundDefault");
@@ -1251,6 +1255,11 @@ public class Rule implements Target, DependencyFilter.AttributeInfoProvider {
   }
 
   @Override
+  public boolean isForDependencyResolution() {
+    return getRuleClassObject().isDependencyResolutionRule();
+  }
+
+  @Override
   public AdvertisedProviderSet getAdvertisedProviders() {
     return getRuleClassObject().getAdvertisedProviders();
   }
@@ -1396,6 +1405,11 @@ public class Rule implements Target, DependencyFilter.AttributeInfoProvider {
     @Override
     public boolean isTestOnly() {
       return isTestOnly;
+    }
+
+    @Override
+    public boolean isForDependencyResolution() {
+      return ruleClassData.isDependencyResolutionRule();
     }
 
     @Override

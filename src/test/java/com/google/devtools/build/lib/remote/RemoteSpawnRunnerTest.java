@@ -21,6 +21,7 @@ import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -39,13 +40,16 @@ import build.bazel.remote.execution.v2.ExecuteOperationMetadata;
 import build.bazel.remote.execution.v2.ExecuteRequest;
 import build.bazel.remote.execution.v2.ExecuteResponse;
 import build.bazel.remote.execution.v2.ExecutedActionMetadata;
+import build.bazel.remote.execution.v2.ExecutionCapabilities;
 import build.bazel.remote.execution.v2.ExecutionStage.Value;
 import build.bazel.remote.execution.v2.LogFile;
+import build.bazel.remote.execution.v2.ServerCapabilities;
 import com.google.common.collect.ClassToInstanceMap;
 import com.google.common.collect.ImmutableClassToInstanceMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
 import com.google.common.eventbus.EventBus;
 import com.google.common.io.ByteStreams;
 import com.google.common.util.concurrent.ListeningScheduledExecutorService;
@@ -81,13 +85,13 @@ import com.google.devtools.build.lib.exec.SpawnRunner;
 import com.google.devtools.build.lib.exec.SpawnRunner.SpawnExecutionContext;
 import com.google.devtools.build.lib.exec.SpawnSchedulingEvent;
 import com.google.devtools.build.lib.exec.util.FakeOwner;
+import com.google.devtools.build.lib.remote.CombinedCache.CachedActionResult;
 import com.google.devtools.build.lib.remote.RemoteExecutionService.RemoteActionResult;
 import com.google.devtools.build.lib.remote.common.BulkTransferException;
 import com.google.devtools.build.lib.remote.common.CacheNotFoundException;
 import com.google.devtools.build.lib.remote.common.OperationObserver;
 import com.google.devtools.build.lib.remote.common.RemoteActionExecutionContext;
 import com.google.devtools.build.lib.remote.common.RemoteCacheClient.ActionKey;
-import com.google.devtools.build.lib.remote.common.RemoteCacheClient.CachedActionResult;
 import com.google.devtools.build.lib.remote.common.RemoteExecutionClient;
 import com.google.devtools.build.lib.remote.common.RemotePathResolver;
 import com.google.devtools.build.lib.remote.common.RemotePathResolver.SiblingRepositoryLayoutResolver;
@@ -170,6 +174,13 @@ public class RemoteSpawnRunnerTest {
   private static final String SIMPLE_ACTION_ID =
       "31aea267dc597b047a9b6993100415b6406f82822318dc8988e4164a535b51ee";
 
+  private final ServerCapabilities remoteExecutorCapabilities =
+      ServerCapabilities.newBuilder()
+          .setLowApiVersion(ApiVersion.low.toSemVer())
+          .setHighApiVersion(ApiVersion.high.toSemVer())
+          .setExecutionCapabilities(ExecutionCapabilities.newBuilder().setExecEnabled(true).build())
+          .build();
+
   @Before
   public final void setUp() throws Exception {
     MockitoAnnotations.initMocks(this);
@@ -192,6 +203,10 @@ public class RemoteSpawnRunnerTest {
     remoteOptions = Options.getDefaults(RemoteOptions.class);
 
     retryService = MoreExecutors.listeningDecorator(Executors.newScheduledThreadPool(1));
+    when(cache.hasRemoteCache()).thenReturn(true);
+    doReturn(remoteExecutorCapabilities).when(cache).getRemoteServerCapabilities();
+    when(executor.getServerCapabilities()).thenReturn(remoteExecutorCapabilities);
+    when(cache.remoteActionCacheSupportsUpdate()).thenReturn(true);
   }
 
   @After
@@ -302,7 +317,10 @@ public class RemoteSpawnRunnerTest {
     runner.exec(spawn, policy);
 
     verify(localRunner).exec(spawn, policy);
+    verify(cache).getRemoteServerCapabilities();
     verify(cache).ensureInputsPresent(any(), any(), any(), anyBoolean(), any());
+    verify(cache, atLeastOnce()).hasRemoteCache();
+    verify(cache, atLeastOnce()).hasDiskCache();
     verifyNoMoreInteractions(cache);
   }
 
@@ -392,7 +410,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(failedAction);
 
     RemoteSpawnRunner runner = spy(newSpawnRunner());
@@ -435,7 +454,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(failedAction);
 
     RemoteSpawnRunner runner = newSpawnRunner();
@@ -479,7 +499,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(null);
 
     IOException err = new IOException("local execution error");
@@ -512,7 +533,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenThrow(new IOException());
 
     IOException err = new IOException("local execution error");
@@ -533,7 +555,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(null);
     when(executor.executeRemotely(
             any(RemoteActionExecutionContext.class),
@@ -757,7 +780,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(cachedResult);
     Exception downloadFailure =
         new BulkTransferException(new CacheNotFoundException(Digest.getDefaultInstance()));
@@ -805,7 +829,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(null);
     ActionResult cachedResult = ActionResult.newBuilder().setExitCode(0).build();
     ActionResult execResult = ActionResult.newBuilder().setExitCode(31).build();
@@ -864,7 +889,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(null);
     ExecuteResponse resp =
         ExecuteResponse.newBuilder()
@@ -919,7 +945,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(null);
     ExecuteResponse resp =
         ExecuteResponse.newBuilder()
@@ -967,7 +994,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(null);
     ExecuteResponse resp =
         ExecuteResponse.newBuilder()
@@ -1009,7 +1037,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(null);
     ExecuteResponse failed =
         ExecuteResponse.newBuilder()
@@ -1050,7 +1079,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(null);
     when(executor.executeRemotely(
             any(RemoteActionExecutionContext.class),
@@ -1078,7 +1108,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenThrow(new IOException("reasons"));
 
     Spawn spawn = newSimpleSpawn();
@@ -1103,7 +1134,8 @@ public class RemoteSpawnRunnerTest {
     when(cache.downloadActionResult(
             any(RemoteActionExecutionContext.class),
             any(ActionKey.class),
-            /* inlineOutErr= */ eq(false)))
+            /* inlineOutErr= */ eq(false),
+            /* inlineOutputFiles= */ eq(ImmutableSet.of())))
         .thenReturn(null);
     when(executor.executeRemotely(
             any(RemoteActionExecutionContext.class),
@@ -1149,7 +1181,8 @@ public class RemoteSpawnRunnerTest {
             tempPathGenerator,
             /* captureCorruptedOutputsDir= */ null,
             remoteOutputChecker,
-            mock(OutputService.class));
+            mock(OutputService.class),
+            Sets.newConcurrentHashSet());
     RemoteSpawnRunner runner =
         new RemoteSpawnRunner(
             execRoot,
@@ -1685,7 +1718,8 @@ public class RemoteSpawnRunnerTest {
                 tempPathGenerator,
                 /* captureCorruptedOutputsDir= */ null,
                 remoteOutputChecker,
-                mock(OutputService.class)));
+                mock(OutputService.class),
+                Sets.newConcurrentHashSet()));
 
     return new RemoteSpawnRunner(
         execRoot,

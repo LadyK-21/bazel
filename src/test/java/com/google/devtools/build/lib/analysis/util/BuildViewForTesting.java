@@ -61,7 +61,6 @@ import com.google.devtools.build.lib.bugreport.BugReporter;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadCompatible;
 import com.google.devtools.build.lib.events.Event;
-import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.events.StoredEventHandler;
 import com.google.devtools.build.lib.packages.NoSuchPackageException;
@@ -80,6 +79,7 @@ import com.google.devtools.build.lib.skyframe.SkyframeBuildView;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.StarlarkBuiltinsValue;
 import com.google.devtools.build.lib.skyframe.TargetPatternPhaseValue;
+import com.google.devtools.build.lib.skyframe.serialization.analysis.RemoteAnalysisCachingDependenciesProvider.DisabledDependenciesProvider;
 import com.google.devtools.build.lib.skyframe.toolchains.ToolchainException;
 import com.google.devtools.build.lib.skyframe.toolchains.UnloadedToolchainContext;
 import com.google.devtools.build.lib.util.AbruptExitException;
@@ -225,8 +225,12 @@ public class BuildViewForTesting {
       TopLevelArtifactContext topLevelOptions,
       ExtendedEventHandler eventHandler,
       EventBus eventBus)
-      throws ViewCreationFailedException, InterruptedException, InvalidConfigurationException,
-          BuildFailedException, TestExecException, AbruptExitException {
+      throws ViewCreationFailedException,
+          InterruptedException,
+          InvalidConfigurationException,
+          BuildFailedException,
+          TestExecException,
+          AbruptExitException {
     populateActionLookupKeyMapAndGetDiff();
     return buildView.update(
         loadingResult,
@@ -251,25 +255,13 @@ public class BuildViewForTesting {
         /* executionSetupCallback= */ null,
         /* buildConfigurationsCreatedCallback= */ null,
         /* buildDriverKeyTestContext= */ null,
-        /* additionalConfigurationChangeEvent= */ Optional.empty());
+        /* additionalConfigurationChangeEvent= */ Optional.empty(),
+        /* remoteAnalysisCachingDependenciesProvider= */ DisabledDependenciesProvider.INSTANCE);
   }
 
   /** Sets the configuration. Not thread-safe. */
-  public void setConfigurationForTesting(
-      EventHandler eventHandler, BuildConfigurationValue configuration) {
-    try {
-      skyframeBuildView.setConfiguration(
-          eventHandler,
-          configuration,
-          /* maxDifferencesToShow= */ -1, /* allowAnalysisCacheDiscards */
-          true,
-          /* additionalConfigurationChangeEvent= */ Optional.empty());
-    } catch (InvalidConfigurationException e) {
-      throw new UnsupportedOperationException(
-          "InvalidConfigurationException was thrown and caught during a test, "
-              + "this case is not yet handled",
-          e);
-    }
+  public void setConfigurationForTesting(BuildConfigurationValue configuration) {
+    skyframeBuildView.setConfiguration(configuration, configuration.getOptions(), true);
   }
 
   public ArtifactFactory getArtifactFactory() {
@@ -434,7 +426,6 @@ public class BuildViewForTesting {
           ConfiguredTargetKey.fromConfiguredTarget(configuredTarget),
           ruleClassProvider,
           skyframeBuildView.getStarlarkTransitionCache(),
-          skyframeBuildView.getBuildConfigurationKeyCache(),
           /* semaphoreLocker= */ () -> {},
           new SkyFunctionEnvironmentForTesting(eventHandler, skyframeExecutor),
           eventHandler)) {

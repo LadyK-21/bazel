@@ -29,6 +29,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.events.Event;
+import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.packages.License.LicenseType;
 import com.google.devtools.build.lib.packages.PackageValidator.InvalidPackageException;
 import com.google.devtools.build.lib.packages.util.PackageLoadingTestCase;
@@ -246,8 +247,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
         "duplicaterulename/BUILD",
         """
         proto_library(name = 'spellcheck_proto',
-                 srcs = ['spellcheck.proto'],
-                 cc_api_version = 2)
+                 srcs = ['spellcheck.proto'])
         cc_library(name = 'spellcheck_proto')  # conflict error stops execution
         x = 1//0  # not reached
         """);
@@ -327,8 +327,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
         "dup/BUILD",
         """
         proto_library(name = 'dup_proto',
-                      srcs  = ['dup.proto'],
-                      cc_api_version = 2)
+                      srcs  = ['dup.proto'])
 
         cc_library(name = 'dup_proto',
                    srcs = ['dup.pb.cc', 'dup.pb.h'])
@@ -470,7 +469,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
     scratch.file(
         "x/BUILD",
         """
-        java_test(name='j', tags = ['nodeployjar'])
+        sh_test(name='s', srcs = ['foo.sh'])
         test_suite(name='t1')
         test_suite(name='t2', tests=[])
         test_suite(name='t3', tests=['//foo'])
@@ -481,15 +480,15 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
 
     // Things to note:
     // - The '$implicit_tests' attribute is unset unless the 'tests' attribute is unset or empty.
-    // - The '$implicit_tests' attribute's value for t1 and t2 is magically able to contain both j
+    // - The '$implicit_tests' attribute's value for t1 and t2 is magically able to contain both s
     //    and c, even though c is instantiated after t1 and t2 are.
 
     assertThat(attributes(pkg.getRule("t1")).get("$implicit_tests", BuildType.LABEL_LIST))
         .containsExactlyElementsIn(
-            Sets.newHashSet(Label.parseCanonical("//x:c"), Label.parseCanonical("//x:j")));
+            Sets.newHashSet(Label.parseCanonical("//x:c"), Label.parseCanonical("//x:s")));
     assertThat(attributes(pkg.getRule("t2")).get("$implicit_tests", BuildType.LABEL_LIST))
         .containsExactlyElementsIn(
-            Sets.newHashSet(Label.parseCanonical("//x:c"), Label.parseCanonical("//x:j")));
+            Sets.newHashSet(Label.parseCanonical("//x:c"), Label.parseCanonical("//x:s")));
     assertThat(attributes(pkg.getRule("t3")).get("$implicit_tests", BuildType.LABEL_LIST))
         .isEmpty();
     assertThat(attributes(pkg.getRule("t4")).get("$implicit_tests", BuildType.LABEL_LIST))
@@ -504,10 +503,14 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
 
     // Install a validator.
     this.validator =
-        (pkg2, eventHandler) -> {
-          if (pkg2.getName().equals("x")) {
-            eventHandler.handle(Event.warn("warning event"));
-            throw new InvalidPackageException(pkg2.getPackageIdentifier(), "nope");
+        new PackageValidator() {
+          @Override
+          public void validate(Package pkg2, ExtendedEventHandler eventHandler)
+              throws InvalidPackageException {
+            if (pkg2.getName().equals("x")) {
+              eventHandler.handle(Event.warn("warning event"));
+              throw new InvalidPackageException(pkg2.getPackageIdentifier(), "nope");
+            }
           }
         };
 
@@ -1178,11 +1181,10 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
    * <p>The macro does not define any targets.
    */
   private void defineEmptyMacroBzl() throws Exception {
-    setBuildLanguageOptions("--experimental_enable_first_class_macros");
     scratch.file(
         "pkg/my_macro.bzl",
         """
-        def _impl(name):
+        def _impl(name, visibility):
             pass
         my_macro = macro(implementation = _impl)
         """);
@@ -1369,11 +1371,10 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
   @Test
   public void testSymbolicMacro_implicitCreationOfInputFilesIsNotTriggeredByMacros()
       throws Exception {
-    setBuildLanguageOptions("--experimental_enable_first_class_macros");
     scratch.file(
         "pkg/my_macro.bzl",
         """
-        def _impl(name):
+        def _impl(name, visibility):
             native.cc_library(
                 name = name,
                 srcs = ["//pkg:src_A.txt", "//pkg:src_B.txt"],
@@ -1398,19 +1399,18 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
 
   @Test
   public void testSymbolicMacro_deferredEvaluationExpandsTransitively() throws Exception {
-    setBuildLanguageOptions("--experimental_enable_first_class_macros");
     scratch.file(
         "pkg/my_macro.bzl",
         """
-        def _inner_impl(name):
+        def _inner_impl(name, visibility):
             native.cc_library(name = name)
         inner_macro = macro(implementation=_inner_impl, finalizer = True)
 
-        def _middle_impl(name):
+        def _middle_impl(name, visibility):
             inner_macro(name = name)
         middle_macro = macro(implementation=_middle_impl, finalizer = True)
 
-        def _outer_impl(name):
+        def _outer_impl(name, visibility):
             middle_macro(name = name)
         outer_macro = macro(implementation=_outer_impl, finalizer = True)
         """);
@@ -1431,7 +1431,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
         "pkg/recursive_macro.bzl",
         String.format(
             """
-            def _impl(name, height):
+            def _impl(name, visibility, height):
                 if height == 0:
                     native.cc_library(name = name)
                 else:
@@ -1453,7 +1453,6 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
 
   @Test
   public void testSymbolicMacro_recursionProhibitedWithEagerEvaluation() throws Exception {
-    setBuildLanguageOptions("--experimental_enable_first_class_macros");
     defineRecursiveMacro(/* deferredEvaluation= */ false);
     expectEvalError(
         """
@@ -1472,7 +1471,6 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
 
   @Test
   public void testSymbolicMacro_recursionProhibitedWithDeferredEvaluation() throws Exception {
-    setBuildLanguageOptions("--experimental_enable_first_class_macros");
     defineRecursiveMacro(/* deferredEvaluation= */ true);
     expectEvalError(
         """
@@ -1491,14 +1489,13 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
 
   @Test
   public void testSymbolicMacro_indirectRecursionAlsoProhibited() throws Exception {
-    setBuildLanguageOptions("--experimental_enable_first_class_macros");
     // Define a pair of macros where A calls B calls A (and then would stop, if allowed to get that
     // far). Wrap it in a different entry point to test that the non-cyclic part is included in the
     // traceback.
     scratch.file(
         "pkg/recursive_macro.bzl",
         """
-        def _A_impl(name, stop):
+        def _A_impl(name, visibility, stop):
             if stop:
                 native.cc_library(name = name)
             else:
@@ -1511,7 +1508,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
             },
         )
 
-        def _B_impl(name):
+        def _B_impl(name, visibility):
             macro_A(
                 name = name + "_A",
                 stop = True,
@@ -1519,7 +1516,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
 
         macro_B = macro(implementation = _B_impl)
 
-        def _main_impl(name):
+        def _main_impl(name, visibility):
             macro_A(name = name)
 
         main_macro = macro(implementation = _main_impl)
@@ -1558,7 +1555,6 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
   }
 
   private void enableMacrosAndUsePrivateVisibility() throws Exception {
-    setBuildLanguageOptions("--experimental_enable_first_class_macros");
     // BuildViewTestCase makes everything public by default.
     setPackageOptions("--default_visibility=private");
   }
@@ -1570,7 +1566,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
     scratch.file(
         "lib/macro.bzl",
         """
-        def _impl(name):
+        def _impl(name, visibility):
             native.cc_library(
                 name = name,
                 visibility = ["//other_pkg:__pkg__"],
@@ -1601,7 +1597,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
     scratch.file(
         "inner/macro.bzl",
         """
-        def _impl(name):
+        def _impl(name, visibility):
             native.cc_library(
                 name = name,
                 visibility = ["//other_pkg:__pkg__"],
@@ -1613,7 +1609,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
         "outer/macro.bzl",
         """
         load("//inner:macro.bzl", "inner_macro")
-        def _impl(name):
+        def _impl(name, visibility):
             inner_macro(name = name)
         outer_macro = macro(implementation = _impl)
         """);
@@ -1630,14 +1626,14 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
   }
 
   @Test
-  public void testDeclarationVisibilityUnioning_respectsPackageDefaultVisibility()
+  public void testDeclarationVisibilityUnioning_doesNotApplyPackageDefaultVisibility()
       throws Exception {
     enableMacrosAndUsePrivateVisibility();
     scratch.file("lib/BUILD");
     scratch.file(
         "lib/macro.bzl",
         """
-        def _impl(name):
+        def _impl(name, visibility):
             native.cc_library(name = name)
         my_macro = macro(implementation = _impl)
         """);
@@ -1653,9 +1649,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
 
     Package pkg = loadPackageAndAssertSuccess("pkg");
     assertVisibilityIs(pkg.getTarget("foo"), "//other_pkg:__pkg__");
-    // TODO: #19922 - Change this behavior, default visibility should not propagate to within a
-    // macro.
-    assertVisibilityIs(pkg.getTarget("bar"), "//other_pkg:__pkg__", "//lib:__pkg__");
+    assertVisibilityIs(pkg.getTarget("bar"), "//lib:__pkg__");
   }
 
   @Test
@@ -1666,7 +1660,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
     scratch.file(
         "lib/macro.bzl",
         """
-        def _impl(name):
+        def _impl(name, visibility):
             native.cc_library(
                 name = name + "_public",
                 visibility = ["//visibility:public"],
@@ -1692,9 +1686,10 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
     Package pkg = loadPackageAndAssertSuccess("pkg");
     assertVisibilityIs(pkg.getTarget("foo_public"), "//visibility:public");
     assertVisibilityIs(pkg.getTarget("foo_private"), "//lib:__pkg__");
-    // Visibility is a label_list. Label lists don't do duplicate elimination. (Nor can we eliminate
-    // all logical redundancies anyway, since visibilities may refer to redundant package groups.)
-    assertVisibilityIs(pkg.getTarget("foo_selfvisible"), "//lib:__pkg__", "//lib:__pkg__");
+    // The visibility concatenation operation does not add any label that would duplicate an
+    // existing one. (Note that we can't eliminate *all* possible redundancy, since the visibility
+    // list's semantics depend on expanding package_groups.)
+    assertVisibilityIs(pkg.getTarget("foo_selfvisible"), "//lib:__pkg__");
   }
 
   @Test
@@ -1704,7 +1699,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
     scratch.file(
         "lib/macro.bzl",
         """
-        def _impl(name):
+        def _impl(name, visibility):
             native.exports_files([name + "_exported"])
             native.exports_files([name + "_internal"], visibility = ["//visibility:private"])
         my_macro = macro(implementation = _impl)
@@ -1729,7 +1724,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
     scratch.file(
         "lib/macro.bzl",
         """
-        def _impl(name):
+        def _impl(name, visibility):
             native.package_group(name = name)
         my_macro = macro(implementation = _impl)
         """);
@@ -1753,7 +1748,7 @@ public final class PackageFactoryTest extends PackageLoadingTestCase {
     scratch.file(
         "lib/macro.bzl",
         """
-        def _impl(name):
+        def _impl(name, visibility):
             native.cc_library(
                 name = name,
                 visibility = ["//visibility:not_a_valid_specifier"],

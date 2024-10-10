@@ -525,32 +525,18 @@ public class RunCommand implements BlazeCommand {
 
   private static ImmutableList<PathToReplace> getPathsToReplace(
       CommandEnvironment env, String testLogDir, boolean isTestTarget) {
-    ImmutableList.Builder<PathToReplace> pathsToReplace =
-        ImmutableList.<PathToReplace>builder()
-            .add(
-                CommandProtos.PathToReplace.newBuilder()
-                    .setType(PathToReplace.Type.OUTPUT_BASE)
-                    .setValue(ByteString.copyFrom(env.getOutputBase().getPathString(), ISO_8859_1))
-                    .build())
-            .add(
-                CommandProtos.PathToReplace.newBuilder()
-                    .setType(PathToReplace.Type.BUILD_WORKING_DIRECTORY)
-                    .setValue(
-                        ByteString.copyFrom(env.getWorkingDirectory().getPathString(), ISO_8859_1))
-                    .build())
-            .add(
-                CommandProtos.PathToReplace.newBuilder()
-                    .setType(PathToReplace.Type.BUILD_WORKSPACE_DIRECTORY)
-                    .setValue(ByteString.copyFrom(env.getWorkspace().getPathString(), ISO_8859_1))
-                    .build());
+    ImmutableList<PathToReplace> pathsToReplace = ExecRequestUtils.getPathsToReplace(env);
     if (isTestTarget) {
-      pathsToReplace.add(
-          CommandProtos.PathToReplace.newBuilder()
-              .setType(PathToReplace.Type.TEST_LOG_SUBDIR)
-              .setValue(ByteString.copyFrom(testLogDir, ISO_8859_1))
-              .build());
+      return ImmutableList.<PathToReplace>builder()
+          .addAll(pathsToReplace)
+          .add(
+              PathToReplace.newBuilder()
+                  .setType(PathToReplace.Type.TEST_LOG_SUBDIR)
+                  .setValue(ByteString.copyFrom(testLogDir, ISO_8859_1))
+                  .build())
+          .build();
     }
-    return pathsToReplace.build();
+    return pathsToReplace;
   }
 
   private static ImmutableList<ByteString> getArgvForExecRequest(
@@ -926,7 +912,7 @@ public class RunCommand implements BlazeCommand {
     // On Windows, runfiles tree is disabled.
     // Workspace name directory doesn't exist, so don't add it.
     if (configuration.runfilesEnabled()) {
-      workingDir = workingDir.getRelative(runfilesSupport.getRunfiles().getSuffix());
+      workingDir = workingDir.getRelative(runfilesSupport.getRunfiles().getPrefix());
     }
 
     // Always create runfiles directory and the workspace-named directory underneath, even if we

@@ -65,8 +65,6 @@ msys*|mingw*|cygwin*)
 esac
 
 if "$is_windows"; then
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
   declare -r EXE_EXT=".exe"
 else
   declare -r EXE_EXT=""
@@ -99,10 +97,8 @@ function test_credential_helper_remote_cache() {
 
   bazel build \
       --remote_cache=grpc://localhost:${worker_port} \
-      //a:a >& $TEST_log || fail "Build without credentials should have succeeded"
+      //a:a >& $TEST_log && fail "Build without credentials should have failed"
   expect_log "Failed to query remote execution capabilities"
-
-  bazel clean
 
   # Helper shouldn't have been called yet.
   expect_credential_helper_calls 0
@@ -176,6 +172,44 @@ function test_credential_helper_clear_cache() {
 
   # Build after clean should have called helper again.
   expect_credential_helper_calls 10
+}
+
+function test_remote_grpc_cache_with_legacy_api() {
+  stop_worker
+  start_worker --legacy_api
+
+  mkdir -p a
+  cat > a/BUILD <<EOF
+genrule(
+  name = 'foo',
+  outs = ["foo.txt"],
+  cmd = "touch \$@",
+)
+EOF
+
+  bazel build \
+      --remote_cache=grpc://localhost:${worker_port} \
+      //a:foo \
+      || fail "Failed to build //a:foo with legacy api Remote Cache"
+}
+
+function test_remote_executor_with_legacy_api() {
+  stop_worker
+  start_worker --legacy_api
+
+  mkdir -p a
+  cat > a/BUILD <<EOF
+genrule(
+  name = 'foo',
+  outs = ["foo.txt"],
+  cmd = "touch \$@",
+)
+EOF
+
+  bazel build \
+      --remote_executor=grpc://localhost:${worker_port} \
+      //a:foo \
+      || fail "Failed to build //a:foo with legacy api Remote Executor"
 }
 
 function test_remote_grpc_cache_with_protocol() {
@@ -273,13 +307,6 @@ EOF
 }
 
 function test_cc_binary() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   mkdir -p a
   cat > a/BUILD <<EOF
 package(default_visibility = ["//visibility:public"])
@@ -301,19 +328,12 @@ EOF
       --remote_executor=grpc://localhost:${worker_port} \
       //a:test >& $TEST_log \
       || fail "Failed to build //a:test with remote execution"
-  expect_log "6 processes: 4 internal, 2 remote"
+  expect_log "[0-9] processes: [0-9] internal, 2 remote\\."
   diff bazel-bin/a/test ${TEST_TMPDIR}/test_expected \
       || fail "Remote execution generated different result"
 }
 
 function test_cc_test() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   mkdir -p a
   cat > a/BUILD <<EOF
 package(default_visibility = ["//visibility:public"])
@@ -336,13 +356,6 @@ EOF
 }
 
 function test_cc_test_split_xml() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   mkdir -p a
   cat > a/BUILD <<EOF
 package(default_visibility = ["//visibility:public"])
@@ -1287,7 +1300,7 @@ EOF
 
   # The same value of --remote_default_platform_properties should NOT invalidate SkyFrames on-disk cache
   #  and the action should not be re-run.
-  expect_log "1 process: 1 internal"
+  expect_log "1 process: .*1 internal"
 
   bazel build \
     --remote_executor=grpc://localhost:${worker_port} \
@@ -1337,7 +1350,7 @@ EOF
 
   # Changing --remote_default_platform_properties value does not invalidate SkyFrames
   # given its is superseded by the platform exec_properties.
-  expect_log "1 process: 1 internal."
+  expect_log "1 process: .*1 internal."
 }
 
 function test_platform_default_properties_invalidation_with_platform_remote_execution_properties() {
@@ -2396,13 +2409,6 @@ EOF
 # Older versions of gcov are not supported with bazel coverage and so will be skipped.
 # See the above `test_java_rbe_coverage_produces_report` for more information.
 function test_cc_rbe_coverage_produces_report() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   # Check to see if intermediate files are supported, otherwise skip.
   gcov --help | grep "\-i," || return 0
 
@@ -2520,13 +2526,6 @@ EOF
 # returned non-empty.
 # See the above `test_java_rbe_coverage_produces_report` for more information.
 function test_cc_rbe_coverage_produces_report_with_llvm() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   local -r clang=$(which clang)
   if [[ ! -x "${clang}" ]]; then
     echo "clang not installed. Skipping"
@@ -3062,13 +3061,6 @@ EOF
 }
 
 function test_external_cc_test() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_external_cc_test
 
   bazel test \
@@ -3078,13 +3070,6 @@ function test_external_cc_test() {
 }
 
 function test_external_cc_test_sibling_repository_layout() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_external_cc_test
 
   bazel test \
@@ -3193,6 +3178,7 @@ function setup_cc_binary_tool_with_dynamic_deps() {
   local repo=$1
 
   cat >> MODULE.bazel <<'EOF'
+bazel_dep(name = "apple_support", version = "1.17.0")
 local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
 local_repository(
   name = "other_repo",
@@ -3255,62 +3241,38 @@ EOF
 }
 
 function test_cc_binary_tool_with_dynamic_deps() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_cc_binary_tool_with_dynamic_deps .
 
   bazel build \
+      --incompatible_macos_set_install_name \
       --remote_executor=grpc://localhost:${worker_port} \
       //pkg:rule >& $TEST_log || fail "Build should succeed"
 }
 
 function test_cc_binary_tool_with_dynamic_deps_sibling_repository_layout() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_cc_binary_tool_with_dynamic_deps .
 
   bazel build \
+      --incompatible_macos_set_install_name \
       --experimental_sibling_repository_layout \
       --remote_executor=grpc://localhost:${worker_port} \
       //pkg:rule >& $TEST_log || fail "Build should succeed"
 }
 
 function test_external_cc_binary_tool_with_dynamic_deps() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_cc_binary_tool_with_dynamic_deps other_repo
 
   bazel build \
+      --incompatible_macos_set_install_name \
       --remote_executor=grpc://localhost:${worker_port} \
       @other_repo//pkg:rule >& $TEST_log || fail "Build should succeed"
 }
 
 function test_external_cc_binary_tool_with_dynamic_deps_sibling_repository_layout() {
-  if [[ "$PLATFORM" == "darwin" ]]; then
-    # TODO(b/37355380): This test is disabled due to RemoteWorker not supporting
-    # setting SDKROOT and DEVELOPER_DIR appropriately, as is required of
-    # action executors in order to select the appropriate Xcode toolchain.
-    return 0
-  fi
-
   setup_cc_binary_tool_with_dynamic_deps other_repo
 
   bazel build \
+      --incompatible_macos_set_install_name \
       --experimental_sibling_repository_layout \
       --remote_executor=grpc://localhost:${worker_port} \
       @other_repo//pkg:rule >& $TEST_log || fail "Build should succeed"
@@ -3340,6 +3302,29 @@ EOF
       --incompatible_check_sharding_support \
       --remote_download_minimal \
       //:x  &> $TEST_log || fail "expected success"
+}
+
+function test_premature_exit_file_checked_remote_download_minimal() {
+  cat <<'EOF' > BUILD
+sh_test(
+    name = 'x',
+    srcs = ['x.sh'],
+)
+EOF
+  cat <<'EOF' > x.sh
+#!/bin/sh
+touch "$TEST_PREMATURE_EXIT_FILE"
+echo "fake pass"
+exit 0
+EOF
+  chmod +x x.sh
+
+  bazel test \
+      --remote_executor=grpc://localhost:${worker_port} \
+      --remote_download_minimal \
+      --test_output=errors \
+      //:x  &> $TEST_log && fail "expected failure"
+  expect_log "-- Test exited prematurely (TEST_PREMATURE_EXIT_FILE exists) --"
 }
 
 function test_cache_key_scrubbing() {
@@ -3551,6 +3536,155 @@ EOF
     --remote_executor=grpc://localhost:${worker_port} \
     //a:test2 >& $TEST_log || fail "Failed to test //a:test2"
   expect_log "2 remote cache hit"
+}
+
+function setup_inlined_outputs() {
+  mkdir -p a
+  cat > a/input.txt <<'EOF'
+input
+EOF
+  cat > a/script.sh <<'EOF'
+#!/bin/sh
+cat $1 $1 > $2
+echo "$1" > $3
+EOF
+  chmod +x a/script.sh
+  cat > a/defs.bzl <<EOF
+def _my_rule_impl(ctx):
+  out = ctx.actions.declare_file(ctx.label.name)
+  unused = ctx.actions.declare_file(ctx.label.name + ".unused")
+  args = ctx.actions.args()
+  args.add(ctx.file.input)
+  args.add(out)
+  args.add(unused)
+  ctx.actions.run(
+    executable = ctx.executable._script,
+    inputs = [ctx.file.input],
+    outputs = [out, unused],
+    arguments = [args],
+    unused_inputs_list = unused,
+    execution_requirements = {
+      "supports-path-mapping": "",
+    },
+  )
+  return [DefaultInfo(files = depset([out]))]
+
+my_rule = rule(
+  implementation = _my_rule_impl,
+  attrs = {
+    "input": attr.label(allow_single_file = True),
+    "_script": attr.label(cfg = "exec", executable = True, default = ":script"),
+  },
+)
+EOF
+  cat > a/BUILD <<'EOF'
+load("//a:defs.bzl", "my_rule")
+
+my_rule(
+  name = "my_rule",
+  input = "input.txt",
+)
+
+sh_binary(
+  name = "script",
+  srcs = ["script.sh"],
+)
+EOF
+}
+
+function test_remote_cache_inlined_output() {
+  setup_inlined_outputs
+
+  # Populate the cache.
+  bazel build \
+    --remote_cache=grpc://localhost:${worker_port} \
+    //a:my_rule >& $TEST_log || fail "Failed to build //a:my_rule"
+  expect_not_log "WARNING: Remote Cache:"
+  bazel clean --expunge
+  bazel shutdown
+
+  bazel build \
+    --remote_cache=grpc://localhost:${worker_port} \
+    --remote_grpc_log=grpc.log \
+    //a:my_rule >& $TEST_log || fail "Failed to build //a:my_rule"
+  expect_log "1 remote cache hit"
+  expect_not_log "WARNING: Remote Cache:"
+  assert_contains "input
+input" bazel-bin/a/my_rule
+
+  cat grpc.log > $TEST_log
+  # Assert that only the output is download as the unused_inputs_list is inlined.
+  # sha256 of "input\ninput\n"
+  expect_log "blobs/c88bd120ac840aa8d8a8fcedb6d620cd49c013730d387eb52be0c113bbcab640/12"
+  expect_log_n "google.bytestream.ByteStream/Read" 1
+
+  # Verify that the unused_inputs_list content is correct.
+  cat > a/input.txt <<'EOF'
+modified
+EOF
+
+  bazel build \
+    --remote_cache=grpc://localhost:${worker_port} \
+    //a:my_rule >& $TEST_log || fail "Failed to build //a:my_rule"
+  assert_contains "input" bazel-bin/a/my_rule
+}
+
+function test_remote_execution_inlined_output() {
+  setup_inlined_outputs
+
+  bazel build \
+    --remote_executor=grpc://localhost:${worker_port} \
+    --remote_grpc_log=grpc.log \
+    //a:my_rule >& $TEST_log || fail "Failed to build //a:my_rule"
+  expect_log "1 remote"
+  assert_contains "input
+input" bazel-bin/a/my_rule
+
+  cat grpc.log > $TEST_log
+  # Assert that only the output is download as the unused_inputs_list is inlined.
+  # sha256 of "input\ninput\n"
+  expect_log "blobs/c88bd120ac840aa8d8a8fcedb6d620cd49c013730d387eb52be0c113bbcab640/12"
+  expect_log_n "google.bytestream.ByteStream/Read" 1
+
+  # Verify that the unused_inputs_list content is correct.
+  cat > a/input.txt <<'EOF'
+modified
+EOF
+
+  bazel build \
+    --remote_executor=grpc://localhost:${worker_port} \
+    //a:my_rule >& $TEST_log || fail "Failed to build //a:my_rule"
+  assert_contains "input" bazel-bin/a/my_rule
+}
+
+function test_remote_execution_inlined_output_with_path_mapping() {
+  setup_inlined_outputs
+
+  bazel build \
+    --remote_executor=grpc://localhost:${worker_port} \
+    --remote_grpc_log=grpc.log \
+    --experimental_output_paths=strip \
+    //a:my_rule >& $TEST_log || fail "Failed to build //a:my_rule"
+  expect_log "1 remote"
+  assert_contains "input
+input" bazel-bin/a/my_rule
+
+  cat grpc.log > $TEST_log
+  # Assert that only the output is download as the unused_inputs_list is inlined.
+  # sha256 of "input\ninput\n"
+  expect_log "blobs/c88bd120ac840aa8d8a8fcedb6d620cd49c013730d387eb52be0c113bbcab640/12"
+  expect_log_n "google.bytestream.ByteStream/Read" 1
+
+  # Verify that the unused_inputs_list content is correct.
+  cat > a/input.txt <<'EOF'
+modified
+EOF
+
+  bazel build \
+    --remote_executor=grpc://localhost:${worker_port} \
+    --experimental_output_paths=strip \
+    //a:my_rule >& $TEST_log || fail "Failed to build //a:my_rule"
+  assert_contains "input" bazel-bin/a/my_rule
 }
 
 run_suite "Remote execution and remote cache tests"

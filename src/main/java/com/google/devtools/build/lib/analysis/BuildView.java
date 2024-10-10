@@ -90,6 +90,7 @@ import com.google.devtools.build.lib.skyframe.SkyframeBuildView;
 import com.google.devtools.build.lib.skyframe.SkyframeBuildView.BuildDriverKeyTestContext;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.TargetPatternPhaseValue;
+import com.google.devtools.build.lib.skyframe.serialization.analysis.RemoteAnalysisCachingDependenciesProvider;
 import com.google.devtools.build.lib.util.AbruptExitException;
 import com.google.devtools.build.lib.util.DetailedExitCode;
 import com.google.devtools.build.lib.util.RegexFilter;
@@ -229,7 +230,8 @@ public class BuildView {
       @Nullable ExecutionSetup executionSetupCallback,
       @Nullable BuildConfigurationsCreated buildConfigurationsCreatedCallback,
       @Nullable BuildDriverKeyTestContext buildDriverKeyTestContext,
-      Optional<AdditionalConfigurationChangeEvent> additionalConfigurationChangeEvent)
+      Optional<AdditionalConfigurationChangeEvent> additionalConfigurationChangeEvent,
+      RemoteAnalysisCachingDependenciesProvider remoteAnalysisCachingDependenciesProvider)
       throws ViewCreationFailedException,
           InvalidConfigurationException,
           InterruptedException,
@@ -253,10 +255,19 @@ public class BuildView {
 
     // Prepare the analysis phase
     BuildConfigurationValue topLevelConfig;
+    boolean shouldDiscardAnalysisCache;
+
     // Configuration creation.
     // TODO(gregce): Consider dropping this phase and passing on-the-fly target / exec configs as
     // needed. This requires cleaning up the invalidation in SkyframeBuildView.setConfigurations.
     try (SilentCloseable c = Profiler.instance().profile("createConfigurations")) {
+      shouldDiscardAnalysisCache =
+          skyframeBuildView.shouldDiscardAnalysisCache(
+              eventHandler,
+              targetOptions,
+              viewOptions.maxConfigChangesToShow,
+              viewOptions.allowAnalysisCacheDiscards,
+              additionalConfigurationChangeEvent);
       topLevelConfig = skyframeExecutor.createConfiguration(eventHandler, targetOptions, keepGoing);
       SkyfocusState skyfocusState = skyframeExecutor.getSkyfocusState();
       if (skyfocusState.enabled()) {
@@ -307,12 +318,7 @@ public class BuildView {
       buildConfigurationsCreatedCallback.run(topLevelConfig);
     }
 
-    skyframeBuildView.setConfiguration(
-        eventHandler,
-        topLevelConfig,
-        viewOptions.maxConfigChangesToShow,
-        viewOptions.allowAnalysisCacheDiscards,
-        additionalConfigurationChangeEvent);
+    skyframeBuildView.setConfiguration(topLevelConfig, targetOptions, shouldDiscardAnalysisCache);
 
     eventBus.post(new MakeEnvironmentEvent(topLevelConfig.getMakeEnvironment()));
     eventBus.post(topLevelConfig.toBuildEvent());
@@ -331,6 +337,12 @@ public class BuildView {
     ImmutableList<TopLevelAspectsKey> aspectKeys =
         createTopLevelAspectKeys(
             aspects, aspectsParameters, labelToTargetMap.keySet(), topLevelConfig, eventHandler);
+
+    if (remoteAnalysisCachingDependenciesProvider.enabled()) {
+      remoteAnalysisCachingDependenciesProvider.setTopLevelConfig(topLevelConfig);
+      skyframeExecutor.setRemoteAnalysisCachingDependenciesProvider(
+          remoteAnalysisCachingDependenciesProvider);
+    }
 
     getArtifactFactory().noteAnalysisStarting();
     SkyframeAnalysisResult skyframeAnalysisResult;

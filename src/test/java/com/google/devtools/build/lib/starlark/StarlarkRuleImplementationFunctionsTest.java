@@ -145,6 +145,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
     scratch.file(
         "foo/BUILD",
         """
+        load("@rules_java//java:defs.bzl", "java_library")
         genrule(name = 'foo',
           cmd = 'dummy_cmd',
           srcs = ['a.txt', 'b.img'],
@@ -748,7 +749,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
         "   tools=ruleContext.attr.tools)");
     @SuppressWarnings("unchecked")
     List<Artifact> inputs = (List<Artifact>) (List<?>) (StarlarkList) ev.lookup("inputs");
-    assertArtifactFilenames(inputs, "mytool.sh", "mytool", "foo_Smytool-runfiles", "t.exe");
+    assertArtifactFilenames(inputs, "mytool.sh", "mytool", "mytool.runfiles", "t.exe");
   }
 
   @Test
@@ -868,7 +869,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
         ((Depset) ev.lookup("inputs")).getSet(Artifact.class).toList(),
         "mytool.sh",
         "mytool",
-        "foo_Smytool-runfiles",
+        "mytool.runfiles",
         "t.exe");
 
     SpawnAction action =
@@ -876,7 +877,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
             Iterables.getOnlyElement(
                 ruleContext.getRuleContext().getAnalysisEnvironment().getRegisteredActions());
     assertThat(ActionsTestUtil.baseArtifactNames(action.getInputs()))
-        .containsAtLeast("mytool.sh", "mytool", "foo_Smytool-runfiles", "t.exe");
+        .containsAtLeast("mytool.sh", "mytool", "mytool.runfiles", "t.exe");
   }
 
   @Test
@@ -2105,7 +2106,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
         """);
     reporter.removeHandler(failFastHandler);
     getConfiguredTarget("//test:my_glob");
-    assertContainsEvent("glob() can only be used while evaluating a BUILD file (or macro)");
+    assertContainsEvent("glob() can only be used while evaluating a BUILD file (or legacy macro)");
   }
 
   @Test
@@ -3061,7 +3062,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
     ConfiguredTarget r = getConfiguredTarget("//a:r");
     Action action =
         getGeneratingAction(r.getProvider(FileProvider.class).getFilesToBuild().getSingleton());
-    assertThat(ActionsTestUtil.baseArtifactNames(action.getInputs())).contains("a_Stool-runfiles");
+    assertThat(ActionsTestUtil.baseArtifactNames(action.getInputs())).contains("tool.runfiles");
   }
 
   @Test
@@ -3093,7 +3094,7 @@ public final class StarlarkRuleImplementationFunctionsTest extends BuildViewTest
     ConfiguredTarget r = getConfiguredTarget("//a:r");
     Action action =
         getGeneratingAction(r.getProvider(FileProvider.class).getFilesToBuild().getSingleton());
-    assertThat(ActionsTestUtil.baseArtifactNames(action.getInputs())).contains("a_Stool-runfiles");
+    assertThat(ActionsTestUtil.baseArtifactNames(action.getInputs())).contains("tool.runfiles");
   }
 
   // Verifies that configuration_field can only be used on 'label' attributes.

@@ -32,7 +32,6 @@ public final class VisibilityProviderTest extends BuildViewTestCase {
   @Before
   public void setUp() throws Exception {
     setBuildLanguageOptions(
-        "--experimental_enable_first_class_macros",
         // Let's test the case where input files have proper visibilities by default.
         "--incompatible_no_implicit_file_export");
 
@@ -142,7 +141,7 @@ public final class VisibilityProviderTest extends BuildViewTestCase {
         """
         load("//rules:simple_rule.bzl", "simple_rule")
 
-        def _impl(name):
+        def _impl(name, visibility):
             simple_rule(
                 name = name + "_rule_target",
                 # No implicit input file, because they can only be created outside a symbolic
@@ -203,11 +202,12 @@ public final class VisibilityProviderTest extends BuildViewTestCase {
     defineSimpleRule();
     scratch.file("lib/BUILD");
     scratch.file(
-        "lib/macro.bzl",
+        // Put the .bzl in //pkg so we don't have to declare //pkg:__pkg__ in visibility.
+        "pkg/macro.bzl",
         """
         load("//rules:simple_rule.bzl", "simple_rule")
 
-        def _impl(name):
+        def _impl(name, visibility):
             simple_rule(
                 name = name + "_actual",
                 visibility = ["//actual_client:__pkg__"])
@@ -223,7 +223,7 @@ public final class VisibilityProviderTest extends BuildViewTestCase {
         "pkg/BUILD",
         """
         load("//rules:simple_rule.bzl", "simple_rule")
-        load("//lib:macro.bzl", "my_macro")
+        load("//pkg:macro.bzl", "my_macro")
 
         my_macro(name = "foo")
 
@@ -245,7 +245,7 @@ public final class VisibilityProviderTest extends BuildViewTestCase {
 
     VisibilityProvider macroAliasVisibility = getVisibility("//pkg:foo_alias");
     assertThat(getVisibilityStrings(macroAliasVisibility))
-        .containsExactly("//alias_client", "//lib");
+        .containsExactly("//alias_client", "//pkg");
     assertThat(macroAliasVisibility.isCreatedInSymbolicMacro()).isTrue();
   }
 }

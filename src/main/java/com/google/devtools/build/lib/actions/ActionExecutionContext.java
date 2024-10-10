@@ -20,10 +20,10 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.cache.OutputMetadataStore;
+import com.google.devtools.build.lib.analysis.SymlinkEntry;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationValue.RunfileSymlinksMode;
 import com.google.devtools.build.lib.bugreport.BugReporter;
 import com.google.devtools.build.lib.clock.Clock;
-import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventKind;
@@ -87,6 +87,42 @@ public class ActionExecutionContext implements Closeable, ActionContext.ActionCo
     @Override
     public String getWorkspaceName() {
       return wrapped.getWorkspaceName();
+    }
+
+    @Override
+    public NestedSet<Artifact> getArtifactsAtCanonicalLocationsForLogging() {
+      return wrapped.getArtifactsAtCanonicalLocationsForLogging();
+    }
+
+    @Override
+    public Iterable<PathFragment> getEmptyFilenamesForLogging() {
+      return wrapped.getEmptyFilenamesForLogging();
+    }
+
+    @Override
+    public NestedSet<SymlinkEntry> getSymlinksForLogging() {
+      return wrapped.getSymlinksForLogging();
+    }
+
+    @Override
+    public NestedSet<SymlinkEntry> getRootSymlinksForLogging() {
+      return wrapped.getRootSymlinksForLogging();
+    }
+
+    @Nullable
+    @Override
+    public Artifact getRepoMappingManifestForLogging() {
+      return wrapped.getRepoMappingManifestForLogging();
+    }
+
+    @Override
+    public boolean isLegacyExternalRunfiles() {
+      return wrapped.isLegacyExternalRunfiles();
+    }
+
+    @Override
+    public boolean isMappingCached() {
+      return wrapped.isMappingCached();
     }
   }
 
@@ -174,14 +210,14 @@ public class ActionExecutionContext implements Closeable, ActionContext.ActionCo
   private final FileOutErr fileOutErr;
   private final ExtendedEventHandler eventHandler;
   private final ImmutableMap<String, String> clientEnv;
-  private final ImmutableMap<Artifact, ImmutableList<FilesetOutputSymlink>> topLevelFilesets;
+  private final ImmutableMap<Artifact, FilesetOutputTree> topLevelFilesets;
   @Nullable private final ArtifactExpander artifactExpander;
   @Nullable private final Environment env;
 
   @Nullable private final FileSystem actionFileSystem;
   @Nullable private final Object skyframeDepsResult;
 
-  private ImmutableList<FilesetOutputSymlink> outputSymlinks = ImmutableList.of();
+  private FilesetOutputTree filesetOutput = FilesetOutputTree.EMPTY;
 
   private final ArtifactPathResolver pathResolver;
   private final DiscoveredModulesPruner discoveredModulesPruner;
@@ -199,7 +235,7 @@ public class ActionExecutionContext implements Closeable, ActionContext.ActionCo
       FileOutErr fileOutErr,
       ExtendedEventHandler eventHandler,
       Map<String, String> clientEnv,
-      ImmutableMap<Artifact, ImmutableList<FilesetOutputSymlink>> topLevelFilesets,
+      ImmutableMap<Artifact, FilesetOutputTree> topLevelFilesets,
       @Nullable ArtifactExpander artifactExpander,
       @Nullable Environment env,
       @Nullable FileSystem actionFileSystem,
@@ -241,7 +277,7 @@ public class ActionExecutionContext implements Closeable, ActionContext.ActionCo
       FileOutErr fileOutErr,
       ExtendedEventHandler eventHandler,
       Map<String, String> clientEnv,
-      ImmutableMap<Artifact, ImmutableList<FilesetOutputSymlink>> topLevelFilesets,
+      ImmutableMap<Artifact, FilesetOutputTree> topLevelFilesets,
       ArtifactExpander artifactExpander,
       @Nullable FileSystem actionFileSystem,
       @Nullable Object skyframeDepsResult,
@@ -388,21 +424,21 @@ public class ActionExecutionContext implements Closeable, ActionContext.ActionCo
     return eventHandler;
   }
 
-  public ImmutableMap<Artifact, ImmutableList<FilesetOutputSymlink>> getTopLevelFilesets() {
+  public ImmutableMap<Artifact, FilesetOutputTree> getTopLevelFilesets() {
     return topLevelFilesets;
   }
 
-  public ImmutableList<FilesetOutputSymlink> getOutputSymlinks() {
-    return outputSymlinks;
+  public FilesetOutputTree getFilesetOutput() {
+    return filesetOutput;
   }
 
-  public void setOutputSymlinks(ImmutableList<FilesetOutputSymlink> outputSymlinks) {
+  public void setFilesetOutput(FilesetOutputTree filesetOutput) {
     checkState(
-        this.outputSymlinks.isEmpty(),
-        "Unexpected reassignment of the outputSymlinks of a Fileset from\n:%s to:\n%s",
-        this.outputSymlinks,
-        outputSymlinks);
-    this.outputSymlinks = checkNotNull(outputSymlinks);
+        this.filesetOutput.isEmpty(),
+        "Unexpected reassignment of Fileset output from\n:%s to:\n%s",
+        this.filesetOutput,
+        filesetOutput);
+    this.filesetOutput = checkNotNull(filesetOutput);
   }
 
   @Override
@@ -426,7 +462,7 @@ public class ActionExecutionContext implements Closeable, ActionContext.ActionCo
     if (owner == null) {
       reason.append(spawn.getResourceOwner().prettyPrint());
     } else {
-      reason.append(Label.print(owner.getLabel()));
+      reason.append(owner.getDescription());
       reason.append(" [");
       reason.append(spawn.getResourceOwner().prettyPrint());
       reason.append(", configuration: ");
@@ -549,7 +585,7 @@ public class ActionExecutionContext implements Closeable, ActionContext.ActionCo
         ImmutableMap.builder();
 
     for (ActionInput input : additionalInputs) {
-      additionalInputMap.put(input, getOutputMetadataStore().getOutputMetadata(input));
+      additionalInputMap.put(input, outputMetadataStore.getOutputMetadata(input));
     }
 
     StaticInputMetadataProvider additionalInputMetadata =

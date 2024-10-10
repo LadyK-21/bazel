@@ -22,7 +22,8 @@ CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${CURRENT_DIR}/../integration_test_setup.sh" \
   || { echo "integration_test_setup.sh not found!" >&2; exit 1; }
 
-function test_runfiles_without_bzlmod() {
+# TODO - ilist@: reenable when java_tools depends on protobuf
+function disable_test_runfiles_without_bzlmod() {
   name="blorp_malorp"
   echo "workspace(name = '$name')" > WORKSPACE
   mkdir foo
@@ -239,7 +240,7 @@ function test_switch_runfiles_from_enabled_to_disabled {
 sh_binary(
   name = "cmd",
   srcs = ["cmd.sh"],
-  data = glob(["data-*"]),
+  data = glob(["data-*"], allow_empty = True),
 )
 genrule(
   name = "g",

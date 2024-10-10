@@ -56,18 +56,12 @@ msys*)
   ;;
 esac
 
-if "$is_windows"; then
-  # Disable MSYS path conversion that converts path-looking command arguments to
-  # Windows paths (even if they arguments are not in fact paths).
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
-fi
-
 function test_starlark_cc() {
   setup_tests src/main/starlark/tests/builtins_bzl/cc
   mkdir -p "src/conditions"
   cp "$(rlocation "io_bazel/src/conditions/BUILD")" "src/conditions/BUILD"
 
+  add_rules_cc "MODULE.bazel"
   cat >> MODULE.bazel<<EOF
 bazel_dep(name = "test_repo", repo_name = "my_test_repo")
 local_path_override(
@@ -202,9 +196,7 @@ function test_cc_static_library_protobuf() {
     return 0
   fi
 
-  cat > MODULE.bazel<<'EOF'
-bazel_dep(name = "protobuf", version = "23.1")
-EOF
+  add_protobuf "MODULE.bazel"
   mkdir -p pkg
   cat > pkg/BUILD<<'EOF'
 cc_static_library(
@@ -213,7 +205,13 @@ cc_static_library(
 )
 EOF
 
-  bazel build --experimental_cc_static_library //pkg:protobuf \
+  # can be removed with protobuf v28.x onwards
+  if $is_windows; then
+    CXXOPTS=""
+  else
+    CXXOPTS="--cxxopt=-Wno-deprecated-declarations --host_cxxopt=-Wno-deprecated-declarations"
+  fi
+  bazel build $CXXOPTS --experimental_cc_static_library //pkg:protobuf \
     &> $TEST_log || fail "Expected build to fail"
 }
 

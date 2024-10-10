@@ -63,7 +63,7 @@ import com.google.devtools.build.lib.actions.DiscoveredModulesPruner;
 import com.google.devtools.build.lib.actions.EnvironmentalExecException;
 import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
-import com.google.devtools.build.lib.actions.FilesetOutputSymlink;
+import com.google.devtools.build.lib.actions.FilesetOutputTree;
 import com.google.devtools.build.lib.actions.InputMetadataProvider;
 import com.google.devtools.build.lib.actions.LostInputsActionExecutionException;
 import com.google.devtools.build.lib.actions.NotifyOnActionCacheHit;
@@ -396,7 +396,7 @@ public final class SkyframeActionExecutor {
       FileSystem actionFileSystem,
       Environment env,
       MetadataInjector metadataInjector,
-      ImmutableMap<Artifact, ImmutableList<FilesetOutputSymlink>> filesets) {
+      ImmutableMap<Artifact, FilesetOutputTree> filesets) {
     outputService.updateActionFileSystemContext(
         action, actionFileSystem, env, metadataInjector, filesets);
   }
@@ -497,8 +497,8 @@ public final class SkyframeActionExecutor {
       long actionStartTime,
       ActionLookupData actionLookupData,
       ArtifactExpander artifactExpander,
-      ImmutableMap<Artifact, ImmutableList<FilesetOutputSymlink>> expandedFilesets,
-      ImmutableMap<Artifact, ImmutableList<FilesetOutputSymlink>> topLevelFilesets,
+      ImmutableMap<Artifact, FilesetOutputTree> expandedFilesets,
+      ImmutableMap<Artifact, FilesetOutputTree> topLevelFilesets,
       @Nullable FileSystem actionFileSystem,
       @Nullable Object skyframeDepsResult,
       ActionPostprocessing postprocessing,
@@ -592,7 +592,7 @@ public final class SkyframeActionExecutor {
       InputMetadataProvider inputMetadataProvider,
       OutputMetadataStore outputMetadataStore,
       ArtifactExpander artifactExpander,
-      ImmutableMap<Artifact, ImmutableList<FilesetOutputSymlink>> topLevelFilesets,
+      ImmutableMap<Artifact, FilesetOutputTree> topLevelFilesets,
       @Nullable FileSystem actionFileSystem,
       @Nullable Object skyframeDepsResult,
       ActionLookupData actionLookupData) {
@@ -647,6 +647,7 @@ public final class SkyframeActionExecutor {
       Action action,
       InputMetadataProvider inputMetadataProvider,
       OutputMetadataStore outputMetadataStore,
+      ArtifactPathResolver artifactPathResolver,
       ArtifactExpander artifactExpander,
       long actionStartTime,
       List<Artifact> resolvedCacheArtifacts,
@@ -710,6 +711,11 @@ public final class SkyframeActionExecutor {
                 }
 
                 @Override
+                public ArtifactPathResolver getPathResolver() {
+                  return artifactPathResolver;
+                }
+
+                @Override
                 public <T extends ActionContext> T getContext(Class<? extends T> type) {
                   return executorEngine.getContext(type);
                 }
@@ -737,7 +743,7 @@ public final class SkyframeActionExecutor {
             checkOutputs(
                 action,
                 outputMetadataStore,
-                /* filesetOutputSymlinksForMetrics= */ null,
+                /* filesetOutputForMetrics= */ null,
                 /* isActionCacheHitForMetrics= */ true);
         if (!eventPosted) {
           eventHandler.post(
@@ -1020,7 +1026,8 @@ public final class SkyframeActionExecutor {
               action.getMnemonic(),
               action.describe(),
               action.getPrimaryOutput().getExecPathString(),
-              getOwnerLabelAsString(action))) {
+              getOwnerLabelAsString(action),
+              getOwnerConfigurationAsString(action))) {
         String message = action.getProgressMessage();
         if (message != null) {
           reporter.startTask(null, prependExecPhaseStats(message));
@@ -1087,6 +1094,14 @@ public final class SkyframeActionExecutor {
         return "";
       }
       return ownerLabel.getCanonicalForm();
+    }
+
+    private String getOwnerConfigurationAsString(Action action) {
+      ActionOwner owner = action.getOwner();
+      if (owner == null) {
+        return "";
+      }
+      return owner.getConfigurationChecksum();
     }
 
     private void notifyActionCompletion(
@@ -1220,7 +1235,7 @@ public final class SkyframeActionExecutor {
         if (!checkOutputs(
             action,
             outputMetadataStore,
-            actionExecutionContext.getOutputSymlinks(),
+            actionExecutionContext.getFilesetOutput(),
             /* isActionCacheHitForMetrics= */ false)) {
           throw toActionExecutionException(
               "not all outputs were created or valid",
@@ -1294,17 +1309,16 @@ public final class SkyframeActionExecutor {
           fileOutErr,
           ErrorTiming.NO_ERROR);
 
-      ImmutableList<FilesetOutputSymlink> outputSymlinks =
-          actionExecutionContext.getOutputSymlinks();
+      FilesetOutputTree filesetOutput = actionExecutionContext.getFilesetOutput();
       checkState(
-          outputSymlinks.isEmpty() || action instanceof SkyframeAwareAction,
+          filesetOutput.isEmpty() || action instanceof SkyframeAwareAction,
           "Unexpected to find outputSymlinks set in an action which is not a SkyframeAwareAction."
               + "\nAction: %s"
               + "\nSymlinks: %s",
           action,
-          outputSymlinks);
+          filesetOutput);
       return ActionExecutionValue.createFromOutputMetadataStore(
-          this.outputMetadataStore, outputSymlinks, action);
+          this.outputMetadataStore, filesetOutput, action);
     }
 
     /**
@@ -1527,7 +1541,7 @@ public final class SkyframeActionExecutor {
   private boolean checkOutputs(
       Action action,
       OutputMetadataStore outputMetadataStore,
-      @Nullable ImmutableList<FilesetOutputSymlink> filesetOutputSymlinksForMetrics,
+      @Nullable FilesetOutputTree filesetOutputForMetrics,
       boolean isActionCacheHitForMetrics)
       throws InterruptedException {
     boolean success = true;
@@ -1548,7 +1562,7 @@ public final class SkyframeActionExecutor {
                 output,
                 metadata,
                 outputMetadataStore,
-                filesetOutputSymlinksForMetrics,
+                filesetOutputForMetrics,
                 isActionCacheHitForMetrics,
                 action);
           } catch (IOException e) {
@@ -1577,7 +1591,7 @@ public final class SkyframeActionExecutor {
       Artifact output,
       FileArtifactValue metadata,
       OutputMetadataStore outputMetadataStore,
-      @Nullable ImmutableList<FilesetOutputSymlink> filesetOutputSymlinks,
+      @Nullable FilesetOutputTree filesetOutput,
       boolean isActionCacheHit,
       Action actionForDebugging)
       throws IOException, InterruptedException {
@@ -1589,8 +1603,8 @@ public final class SkyframeActionExecutor {
                   output, outputMetadataStore, actionForDebugging)));
       return;
     }
-    if (output.isFileset() && filesetOutputSymlinks != null) {
-      outputArtifactsSeen.accumulate(filesetOutputSymlinks);
+    if (output.isFileset() && filesetOutput != null) {
+      outputArtifactsSeen.accumulate(filesetOutput);
     } else if (!output.isTreeArtifact()) {
       outputArtifactsSeen.accumulate(metadata);
       if (isActionCacheHit) {

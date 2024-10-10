@@ -82,6 +82,7 @@ import com.google.devtools.build.lib.util.OnDemandString;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.view.proto.Deps;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.ExtensionRegistry;
 import java.io.IOException;
 import java.io.InputStream;
@@ -128,6 +129,7 @@ public final class JavaCompileAction extends AbstractAction implements CommandAc
 
   private final NestedSet<Artifact> tools;
   private final CompilationType compilationType;
+  private final ActionEnvironment env;
   private final ImmutableMap<String, String> executionInfo;
   private final CommandLine executableLine;
   private final CommandLine flagLine;
@@ -152,6 +154,7 @@ public final class JavaCompileAction extends AbstractAction implements CommandAc
       NestedSet<Artifact> transitiveInputs,
       NestedSet<Artifact> directJars,
       ImmutableSet<Artifact> outputs,
+      ActionEnvironment env,
       ImmutableMap<String, String> executionInfo,
       ExtraActionInfoSupplier extraActionInfoSupplier,
       CommandLine executableLine,
@@ -173,6 +176,7 @@ public final class JavaCompileAction extends AbstractAction implements CommandAc
     }
     this.tools = tools;
     this.compilationType = compilationType;
+    this.env = env;
     this.executionInfo =
         configuration.modifiedExecutionInfo(executionInfo, compilationType.mnemonic);
     this.executableLine = executableLine;
@@ -211,9 +215,7 @@ public final class JavaCompileAction extends AbstractAction implements CommandAc
 
   @Override
   public ActionEnvironment getEnvironment() {
-    return configuration
-        .getActionEnvironment()
-        .withAdditionalFixedVariables(JavaCompileActionBuilder.UTF8_ENVIRONMENT);
+    return env;
   }
 
   @Override
@@ -842,11 +844,11 @@ public final class JavaCompileAction extends AbstractAction implements CommandAc
       Artifact outputDepsProto,
       ActionExecutionContext actionExecutionContext)
       throws IOException {
-    InputStream inMemoryOutput = spawnResult.getInMemoryOutput(outputDepsProto);
+    ByteString inMemoryOutput = spawnResult.getInMemoryOutput(outputDepsProto);
     try (InputStream inputStream =
         inMemoryOutput == null
             ? actionExecutionContext.getInputPath(outputDepsProto).getInputStream()
-            : inMemoryOutput) {
+            : inMemoryOutput.newInput()) {
       return Deps.Dependencies.parseFrom(inputStream, ExtensionRegistry.getEmptyRegistry());
     }
   }

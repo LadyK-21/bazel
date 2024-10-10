@@ -299,6 +299,25 @@ public final class Actions {
       };
 
   /**
+   * Check whether two artifacts are a runfiles middleman - runfiles output manifest pair.
+   *
+   * <p>This is necessary because these are exempt from the "path of one artifact cannot be a prefix
+   * of another" rule. This is like this for historical reasons.
+   */
+  public static boolean isRunfilesArtifactPair(Artifact runfilesTree, Artifact runfilesManifest) {
+    if (!runfilesTree.isMiddlemanArtifact()) {
+      // The outside artifact is not a middleman. No go.
+      return false;
+    }
+
+    // Now check whether the path of the inner artifact matches the expected path of a runfiles
+    // output manifest.
+    return runfilesManifest
+        .getExecPathString()
+        .equals(runfilesTree.getExecPath().getRelative("MANIFEST").getPathString());
+  }
+
+  /**
    * Finds Artifact prefix conflicts between generated artifacts. An artifact prefix conflict
    * happens if one action generates an artifact whose path is a strict prefix of another artifact's
    * path. Those two artifacts cannot exist simultaneously in the output tree.
@@ -341,7 +360,8 @@ public final class Actions {
         // Check length first so that we only detect strict prefix conflicts. Equal exec paths are
         // possible from shared actions.
         if (pathJ.getPathString().length() > pathI.getPathString().length()
-            && pathJ.startsWith(pathI)) {
+            && pathJ.startsWith(pathI)
+            && !isRunfilesArtifactPair(artifactI, artifactJ)) {
           ActionAnalysisMetadata actionI =
               Preconditions.checkNotNull(actionGraph.getGeneratingAction(artifactI), artifactI);
           ActionAnalysisMetadata actionJ =

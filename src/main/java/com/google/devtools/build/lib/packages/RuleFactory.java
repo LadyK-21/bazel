@@ -21,7 +21,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.packages.Attribute.StarlarkComputedDefaultTemplate.CannotPrecomputeDefaultsException;
 import com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassType;
-import com.google.devtools.build.lib.packages.TargetDefinitionContext.NameConflictException;
+import com.google.devtools.build.lib.packages.TargetRecorder.NameConflictException;
 import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.util.List;
@@ -289,15 +289,15 @@ public class RuleFactory {
   @Nullable
   private static List<Label> getModifiedVisibility(
       Package.Builder pkgBuilder, BuildLangTypedAttributeValuesMap args) {
-    if (pkgBuilder.getCurrentMacroFrame() == null) {
+    MacroInstance currentMacro = pkgBuilder.currentMacro();
+    if (currentMacro == null) {
       return null;
     }
 
     RuleVisibility visibility = null;
     Object uncheckedVisibilityAttr = args.getAttributeValue("visibility");
     if (uncheckedVisibilityAttr == null) {
-      // TODO: #19922 - Don't use default_visibility, we're in a symbolic macro.
-      visibility = pkgBuilder.getPartialPackageArgs().defaultVisibility();
+      visibility = RuleVisibility.PRIVATE;
     } else {
       try {
         List<Label> visibilityAttr =
@@ -311,7 +311,7 @@ public class RuleFactory {
       }
     }
 
-    return pkgBuilder.copyAppendingCurrentMacroLocation(visibility).getDeclaredLabels();
+    return currentMacro.concatDefinitionLocationToVisibility(visibility).getDeclaredLabels();
   }
 
   /**
@@ -323,7 +323,8 @@ public class RuleFactory {
     for (String ruleClassName : ruleClassMap.keySet()) {
       RuleClass cl = ruleClassMap.get(ruleClassName);
       if (cl.getRuleClassType() == RuleClassType.NORMAL
-          || cl.getRuleClassType() == RuleClassType.TEST) {
+          || cl.getRuleClassType() == RuleClassType.TEST
+          || cl.getRuleClassType() == RuleClassType.BUILD_ONLY) {
         result.put(ruleClassName, new BuiltinRuleFunction(cl));
       }
     }
@@ -347,7 +348,10 @@ public class RuleFactory {
         throw Starlark.errorf("unexpected positional arguments");
       }
       try {
-        Package.Builder pkgBuilder = Package.Builder.fromOrFail(thread, "rules");
+        Package.Builder pkgBuilder =
+            ruleClass.getRuleClassType() != RuleClassType.BUILD_ONLY
+                ? Package.Builder.fromOrFail(thread, "rules")
+                : Package.Builder.fromOrFailAllowBuildOnly(thread, ruleClass.getName() + " rule");
         RuleFactory.createAndAddRule(
             pkgBuilder,
             ruleClass,

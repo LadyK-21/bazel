@@ -421,6 +421,8 @@ EOF
   cat > "$pkg/main.cc" <<EOF
 #include <iostream>
 #include <string>
+#include "$pkg/lib1/gen/top_level.h"
+#include "$pkg/lib1/gen/other_dir/not_top_level.h"
 #include "$pkg/lib1/lib1.h"
 #include "lib2.h"
 
@@ -430,18 +432,28 @@ int main() {
   std::cout << GetLib1Greeting() << std::endl;
   std::cout << GetLib2Greeting() << std::endl;
   std::cout << TreeArtifactGreeting() << std::endl;
+  std::cout << TOP_LEVEL_CONSTANT << " " << NOT_TOP_LEVEL_CONSTANT << std::endl;
   return 0;
 }
 EOF
 
   mkdir -p "$pkg"/lib1
   cat > "$pkg/lib1/BUILD" <<EOF
+load("//$pkg/common/utils:defs.bzl", "gen_h", "transition_wrapper")
+
 cc_library(
     name = "lib1",
     srcs = ["lib1.cc"],
-    hdrs = ["lib1.h"],
+    hdrs = [
+        "lib1.h",
+        ":gen",
+    ],
     deps = ["//$pkg/common/utils:utils"],
     visibility = ["//visibility:public"],
+)
+
+gen_h(
+    name = "gen",
 )
 EOF
   cat > "$pkg/lib1/lib1.h" <<'EOF'
@@ -530,6 +542,7 @@ cc_library(
     name = "utils",
     srcs = ["dir/utils.cc"],
     hdrs = ["dir/utils.h"],
+    defines = ["MY_FILE=\\\"+$(execpath dir/utils.cc)+\\\""],
     include_prefix = "other_dir",
     strip_include_prefix = "dir",
     visibility = ["//visibility:public"],
@@ -611,11 +624,49 @@ gen_cc = rule(
         "subject": attr.string(),
     },
 )
+
+def _gen_h_impl(ctx):
+    out = ctx.actions.declare_directory(ctx.label.name)
+    ctx.actions.run_shell(
+        outputs = [out],
+        command = """\
+cat >{out_path}/top_level.h <<EOF2
+#ifndef TOP_LEVEL_H_
+#define TOP_LEVEL_H_
+
+#define TOP_LEVEL_CONSTANT 42
+
+#endif
+EOF2
+mkdir -p {out_path}/other_dir
+cat >{out_path}/other_dir/not_top_level.h <<EOF2
+#ifndef NOT_TOP_LEVEL_H_
+#define NOT_TOP_LEVEL_H_
+
+#define NOT_TOP_LEVEL_CONSTANT 43
+
+#endif
+EOF2
+        """.format(
+            out_path = out.path,
+        ),
+    )
+    return [
+        DefaultInfo(files = depset([out])),
+    ]
+
+gen_h = rule(implementation = _gen_h_impl)
 EOF
   cat > "$pkg/common/utils/utils.cc.tpl" <<'EOF'
 #include "utils.h"
 
+#include <cstdlib>
+#include <iostream>
+
 std::string AsGreeting(const std::string& name) {
+  if (std::string(MY_FILE).find("-out/cfg/") == std::string::npos) {
+    std::cerr << "Expected path to contain '-out/cfg/'" << std::endl;
+  }
   return "{GREETING}, " + name + "!";
 }
 EOF
@@ -623,27 +674,29 @@ EOF
   bazel run \
     --verbose_failures \
     --experimental_output_paths=strip \
-    --modify_execution_info=CppCompile=+supports-path-mapping \
+    --modify_execution_info=CppCompile=+supports-path-mapping,CppModuleMap=+supports-path-mapping \
     --remote_executor=grpc://localhost:${worker_port} \
-    --features=-module_maps \
+    --features=layering_check \
     "//$pkg:main" &>"$TEST_log" || fail "Expected success"
 
   expect_log 'Hello, lib1!'
   expect_log 'Hello, lib2!'
   expect_log 'Hello, TreeArtifact!'
+  expect_log '42 43'
   expect_not_log 'remote cache hit'
 
   bazel run \
     --verbose_failures \
     --experimental_output_paths=strip \
-    --modify_execution_info=CppCompile=+supports-path-mapping \
+    --modify_execution_info=CppCompile=+supports-path-mapping,CppModuleMap=+supports-path-mapping \
     --remote_executor=grpc://localhost:${worker_port} \
-    --features=-module_maps \
+    --features=layering_check \
     "//$pkg:transitioned_main" &>"$TEST_log" || fail "Expected success"
 
   expect_log 'Hi there, lib1!'
   expect_log 'Hi there, lib2!'
   expect_log 'Hello, TreeArtifact!'
+  expect_log '42 43'
   # Compilation actions for lib1, lib2 and main should result in cache hits due
   # to path stripping, utils is legitimately different and should not.
   expect_log ' 4 remote cache hit'

@@ -56,13 +56,6 @@ msys*)
   ;;
 esac
 
-if "$is_windows"; then
-  # Disable MSYS path conversion that converts path-looking command arguments to
-  # Windows paths (even if they arguments are not in fact paths).
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
-fi
-
 function set_up() {
   local java_tools_rlocation=$(rlocation io_bazel/src/java_tools.zip)
   local java_tools_zip_file_url="file://${java_tools_rlocation}"
@@ -84,12 +77,13 @@ http_archive(
     name = "local_java_tools_prebuilt",
     urls = ["${java_tools_prebuilt_zip_file_url}"]
 )
-bazel_dep(name = "abseil-cpp", version = "20240116.2", repo_name = "com_google_absl")
+bazel_dep(name = "abseil-cpp", version = "20230802.1", repo_name = "com_google_absl")
 EOF
   # Dependencies of java_tools
   add_platforms "MODULE.bazel"
   add_rules_cc "MODULE.bazel"
-  add_rules_proto "MODULE.bazel"
+  add_rules_java "MODULE.bazel"
+  add_protobuf "MODULE.bazel"
   add_rules_license "MODULE.bazel"
 }
 

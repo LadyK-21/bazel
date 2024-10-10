@@ -150,6 +150,7 @@ message FailureDetail {
     ModCommand mod_command = 183;
     BuildReport build_report = 184;
     Skyfocus skyfocus = 185;
+    RemoteAnalysisCaching remote_analysis_caching = 186;
   }
 
   reserved 102; // For internal use
@@ -387,6 +388,17 @@ message Skyfocus {
   Code code = 1;
 }
 
+// Failure details for errors produced during remote analysis caching.
+message RemoteAnalysisCaching {
+  enum Code {
+    REMOTE_ANALYSIS_CACHING_UNKNOWN = 0 [(metadata) = { exit_code: 1 }];
+    SERIALIZED_FRONTIER_PROFILE_FAILED = 1 [(metadata) = { exit_code: 1 }];
+    PROJECT_FILE_NOT_FOUND = 2 [(metadata) = { exit_code: 2 }];
+  }
+
+  Code code = 1;
+}
+
 message PackageOptions {
   enum Code {
     reserved 2, 3;  // For internal use
@@ -584,7 +596,7 @@ message Command {
     STARLARK_OPTIONS_PARSE_FAILURE = 10 [(metadata) = { exit_code: 2 }];
     ARGUMENTS_NOT_RECOGNIZED = 11 [(metadata) = { exit_code: 2 }];
     NOT_IN_WORKSPACE = 12 [(metadata) = { exit_code: 2 }];
-    SPACES_IN_WORKSPACE_PATH = 13 [(metadata) = { exit_code: 36 }];
+    reserved 13;
     IN_OUTPUT_DIRECTORY = 14 [(metadata) = { exit_code: 2 }];
   }
 
@@ -738,6 +750,7 @@ message LocalExecution {
   enum Code {
     LOCAL_EXECUTION_UNKNOWN = 0 [(metadata) = { exit_code: 37 }];
     LOCKFREE_OUTPUT_PREREQ_UNMET = 1 [(metadata) = { exit_code: 2 }];
+    UNTRACKED_RESOURCE = 2 [(metadata) = { exit_code: 1 }];
   }
 
   Code code = 1;
@@ -950,7 +963,8 @@ message DumpCommand {
     STARLARK_HEAP_DUMP_FAILED = 5 [(metadata) = { exit_code: 8 }];
      reserved 6; // For internal use
     SKYFRAME_MEMORY_DUMP_FAILED = 7 [(metadata) = { exit_code: 7 }];
-    SERIALIZED_FRONTIER_PROFILE_FAILED = 8 [(metadata) = { exit_code: 7 }];
+    // deprecated, moved to the RemoteAnalysisCaching message.
+    reserved 8;
   }
 
   Code code = 1;

@@ -18,7 +18,10 @@ load(":common/cc/cc_common.bzl", "cc_common")
 load(":common/cc/cc_helper.bzl", "cc_helper")
 load(":common/cc/cc_info.bzl", "CcInfo")
 load(":common/cc/semantics.bzl", cc_semantics = "semantics")
+load(":common/objc/apple_configuration.bzl", "apple_configuration")
 load(":common/objc/apple_env.bzl", "apple_host_system_env", "target_apple_env")
+load(":common/objc/compilation_artifacts_info.bzl", "CompilationArtifactsInfo")
+load(":common/objc/intermediate_artifacts.bzl", "create_intermediate_artifacts")
 load(":common/objc/objc_common.bzl", "objc_common")
 load(":common/objc/providers.bzl", "J2ObjcEntryClassInfo", "J2ObjcMappingFileInfo")
 load(":common/xcode/providers.bzl", "XcodeVersionInfo")
@@ -53,11 +56,14 @@ def _build_common_variables(
         has_module_map = False,
         direct_cc_compilation_contexts = []):
     compilation_attributes = objc_internal.create_compilation_attributes(ctx = ctx)
-    intermediate_artifacts = objc_internal.create_intermediate_artifacts(ctx = ctx)
+    intermediate_artifacts = create_intermediate_artifacts(ctx = ctx)
     if empty_compilation_artifacts:
-        compilation_artifacts = objc_internal.create_compilation_artifacts()
+        compilation_artifacts = CompilationArtifactsInfo()
     else:
-        compilation_artifacts = objc_internal.create_compilation_artifacts(ctx = ctx)
+        compilation_artifacts = CompilationArtifactsInfo(
+            ctx = ctx,
+            intermediate_artifacts = intermediate_artifacts,
+        )
 
     (
         objc_provider,
@@ -341,7 +347,7 @@ def _cc_compile_and_link(
     )
     module_map = None
     if generate_module_map:
-        module_map = intermediate_artifacts.internal_module_map
+        module_map = intermediate_artifacts.internal_module_map()
 
     purpose = "{}_objc_arc".format(_get_purpose(common_variables))
     arc_primary_module_map_fc = feature_configuration
@@ -388,7 +394,7 @@ def _cc_compile_and_link(
     if generate_module_map_for_swift:
         _generate_extra_module_map(
             common_variables,
-            intermediate_artifacts.swift_module_map,
+            intermediate_artifacts.swift_module_map(),
             public_hdrs,
             private_hdrs,
             objc_compilation_context.public_textual_hdrs,
@@ -716,7 +722,9 @@ def _register_binary_strip_action(
     args.add("-o", stripped_binary)
     args.add(binary)
     xcode_config = ctx.attr._xcode_config[XcodeVersionInfo]
-    platform = _builtins.internal.objc_internal.get_target_platform(build_config = build_config)
+    apple_config = _builtins.internal.objc_internal.get_apple_config(build_config = build_config)
+    platform = apple_configuration.get_single_arch_platform(apple_config)
+
     ctx.actions.run(
         mnemonic = "ObjcBinarySymbolStrip",
         executable = "/usr/bin/xcrun",

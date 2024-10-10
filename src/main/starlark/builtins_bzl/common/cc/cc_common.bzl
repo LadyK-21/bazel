@@ -402,6 +402,7 @@ def _create_compilation_context(
         external_includes = _UNBOUND,
         virtual_to_original_headers = _UNBOUND,
         dependent_cc_compilation_contexts = _UNBOUND,
+        exported_dependent_cc_compilation_contexts = _UNBOUND,
         non_code_inputs = _UNBOUND,
         headers_checking_mode = _UNBOUND,
         propagate_module_map_to_compile_action = _UNBOUND,
@@ -442,6 +443,8 @@ def _create_compilation_context(
         virtual_to_original_headers = depset()
     if dependent_cc_compilation_contexts == _UNBOUND:
         dependent_cc_compilation_contexts = []
+    if exported_dependent_cc_compilation_contexts == _UNBOUND:
+        exported_dependent_cc_compilation_contexts = []
     if non_code_inputs == _UNBOUND:
         non_code_inputs = []
     if headers_checking_mode == _UNBOUND:
@@ -478,6 +481,7 @@ def _create_compilation_context(
         external_includes = external_includes,
         virtual_to_original_headers = virtual_to_original_headers,
         dependent_cc_compilation_contexts = dependent_cc_compilation_contexts,
+        exported_dependent_cc_compilation_contexts = exported_dependent_cc_compilation_contexts,
         non_code_inputs = non_code_inputs,
         loose_hdrs_dirs = [],
         headers_checking_mode = headers_checking_mode,
@@ -661,7 +665,7 @@ def _compile(
         public_hdrs = [],
         private_hdrs = [],
         textual_hdrs = [],
-        additional_exported_hdrs = _UNBOUND,
+        additional_exported_hdrs = _UNBOUND,  # TODO(ilist@): remove, there are no uses
         includes = [],
         quote_includes = [],
         system_includes = [],
@@ -671,6 +675,8 @@ def _compile(
         include_prefix = "",
         strip_include_prefix = "",
         user_compile_flags = [],
+        conly_flags = [],
+        cxx_flags = [],
         compilation_contexts = [],
         implementation_compilation_contexts = _UNBOUND,
         disallow_pic_outputs = False,
@@ -756,6 +762,8 @@ def _compile(
         include_prefix = include_prefix,
         strip_include_prefix = strip_include_prefix,
         user_compile_flags = user_compile_flags,
+        conly_flags = conly_flags,
+        cxx_flags = cxx_flags,
         compilation_contexts = compilation_contexts,
         implementation_compilation_contexts = implementation_compilation_contexts,
         disallow_pic_outputs = disallow_pic_outputs,

@@ -73,7 +73,7 @@ function test_path_with_spaces() {
   cd "$ws"
   touch WORKSPACE
 
-  bazel info &> $TEST_log && fail "Info succeeeded"
+  bazel info &> $TEST_log || fail "Info failed"
   bazel help &> $TEST_log || fail "Help failed"
 }
 
@@ -400,6 +400,8 @@ function test_package_loading_with_remapping_changes() {
   #     WORKSPACE (name=tree, local_repository(flower))
   #     oak/
   #       BUILD (:oak)
+
+  echo 'workspace(name="main")' > WORKSPACE  # clean main workspace
 
   mkdir -p flower/daisy
   echo 'workspace(name="flower")' > flower/WORKSPACE
@@ -809,7 +811,7 @@ EOF
   bazel query //... &>"$TEST_log" \
       || fail "Expected query to succeed"
   expect_log "def.bzl loaded"
-  expect_not_log "external"
+  expect_not_log "//external"
 }
 
 function test_mainrepo_name_remapped_properly() {
@@ -838,7 +840,7 @@ EOF
   bazel query @a//... &>"$TEST_log" \
       || fail "Expected query to succeed"
   expect_log "def.bzl loaded"
-  expect_not_log "external"
+  expect_not_log "//external"
 
   cd ..
   cat > mainrepo/WORKSPACE<<EOF

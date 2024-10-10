@@ -183,7 +183,6 @@ final class DependencyProducer
         configurationKey,
         attributeTransition,
         parameters.transitionCache(),
-        parameters.buildConfigurationKeyCache(),
         (TransitionApplier.ResultSink) this,
         parameters.eventHandler(),
         /* runAfter= */ this::processTransitionResult);
@@ -202,7 +201,7 @@ final class DependencyProducer
   }
 
   @Override
-  public void acceptTransitionError(OptionsParsingException e) {
+  public void acceptOptionsParsingError(OptionsParsingException e) {
     sink.acceptDependencyError(
         DependencyError.of(
             new OptionsParsingException(

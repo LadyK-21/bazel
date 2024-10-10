@@ -27,6 +27,7 @@ import com.google.devtools.build.lib.skyframe.serialization.LeafObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.LeafSerializationContext;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
 import com.google.devtools.build.lib.skyframe.serialization.autocodec.SerializationConstant;
+import com.google.devtools.build.lib.util.HashCodes;
 import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.StringUtilities;
 import com.google.devtools.build.lib.vfs.OsPathPolicy;
@@ -48,6 +49,8 @@ public final class RepositoryName {
   public static final RepositoryName BAZEL_TOOLS = new RepositoryName("bazel_tools");
 
   @SerializationConstant public static final RepositoryName MAIN = new RepositoryName("");
+
+  @SerializationConstant static final RepositoryName BUILTINS = new RepositoryName("_builtins");
 
   private static final Pattern VALID_REPO_NAME = Pattern.compile("[\\w\\-.+]*");
 
@@ -78,6 +81,9 @@ public final class RepositoryName {
     if (name.isEmpty()) {
       return MAIN;
     }
+    if (name.equals(BUILTINS.name)) {
+      return BUILTINS;
+    }
     try {
       return repositoryNameCache.get(name);
     } catch (CompletionException e) {
@@ -94,6 +100,9 @@ public final class RepositoryName {
       //   failing. This suggests to me that something is comparing RepositoryName objects using
       //   reference equality instead of #equals().
       return MAIN;
+    }
+    if (name.equals(BUILTINS.name)) {
+      return BUILTINS;
     }
     return repositoryNameCache.get(name);
   }
@@ -145,6 +154,8 @@ public final class RepositoryName {
    */
   @Nullable private final String didYouMeanSuffix;
 
+  private final int hashCode;
+
   private RepositoryName(
       String name,
       @Nullable RepositoryName ownerRepoIfNotVisible,
@@ -152,6 +163,9 @@ public final class RepositoryName {
     this.name = name;
     this.ownerRepoIfNotVisible = ownerRepoIfNotVisible;
     this.didYouMeanSuffix = didYouMeanSuffix;
+    this.hashCode =
+        31 * OsPathPolicy.getFilePathOs().hash(name)
+            + HashCodes.hashObjects(ownerRepoIfNotVisible, didYouMeanSuffix);
   }
 
   private RepositoryName(String name) {
@@ -163,7 +177,7 @@ public final class RepositoryName {
    * message is sanitized.
    */
   static void validate(String name) throws LabelSyntaxException {
-    if (name.isEmpty()) {
+    if (name.isEmpty() || name.equals(BUILTINS.name)) {
       return;
     }
 
@@ -223,6 +237,10 @@ public final class RepositoryName {
 
   public boolean isVisible() {
     return ownerRepoIfNotVisible == null;
+  }
+
+  public boolean isOwnerRepoMainRepo() {
+    return !isVisible() && ownerRepoIfNotVisible.isMain();
   }
 
   // Must only be called if isVisible() returns true.
@@ -373,8 +391,7 @@ public final class RepositoryName {
 
   @Override
   public int hashCode() {
-    return Objects.hash(
-        OsPathPolicy.getFilePathOs().hash(name), ownerRepoIfNotVisible, didYouMeanSuffix);
+    return hashCode;
   }
 
   public static Codec repositoryNameCodec() {

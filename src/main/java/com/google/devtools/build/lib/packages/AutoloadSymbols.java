@@ -22,12 +22,19 @@ import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.devtools.build.lib.bazel.bzlmod.BazelDepGraphValue;
+import com.google.devtools.build.lib.bazel.bzlmod.ModuleKey;
+import com.google.devtools.build.lib.bazel.bzlmod.Version;
+import com.google.devtools.build.lib.bazel.bzlmod.Version.ParseException;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.Label.RepoContext;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
+import com.google.devtools.build.lib.cmdline.RepositoryMapping;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
+import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
 import com.google.devtools.build.lib.skyframe.BzlLoadValue;
+import com.google.devtools.build.lib.skyframe.PrecomputedValue.Precomputed;
 import com.google.devtools.build.lib.skyframe.RepositoryMappingValue;
 import com.google.devtools.build.skyframe.SkyFunction;
 import java.util.HashSet;
@@ -38,6 +45,7 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
+import net.starlark.java.eval.GuardedValue;
 import net.starlark.java.eval.Starlark;
 import net.starlark.java.eval.StarlarkSemantics;
 
@@ -81,6 +89,10 @@ public class AutoloadSymbols {
   // Used for nicer error messages
   private final boolean bzlmodEnabled;
   private final boolean autoloadsEnabled;
+
+  // Configuration of  --incompatible_load_externally
+  public static final Precomputed<AutoloadSymbols> AUTOLOAD_SYMBOLS =
+      new Precomputed<>("autoload_symbols");
 
   public AutoloadSymbols(RuleClassProvider ruleClassProvider, StarlarkSemantics semantics) {
     ImmutableList<String> symbolConfiguration =
@@ -232,10 +244,14 @@ public class AutoloadSymbols {
       ImmutableMap<String, Object> originalEnv,
       ImmutableMap<String, Object> newSymbols) {
     if (isWithAutoloads) {
-      return modifyBuildBzlEnv(originalEnv, /* add= */ newSymbols, /* remove= */ removedSymbols);
+      return modifyBuildBzlEnv(
+          originalEnv, /* add= */ newSymbols, /* remove= */ removedSymbols, isWithAutoloads);
     } else {
       return modifyBuildBzlEnv(
-          originalEnv, /* add= */ ImmutableMap.of(), /* remove= */ partiallyRemovedSymbols);
+          originalEnv,
+          /* add= */ ImmutableMap.of(),
+          /* remove= */ partiallyRemovedSymbols,
+          isWithAutoloads);
     }
   }
 
@@ -247,7 +263,8 @@ public class AutoloadSymbols {
   private ImmutableMap<String, Object> modifyBuildBzlEnv(
       ImmutableMap<String, Object> originalEnv,
       ImmutableMap<String, Object> add,
-      ImmutableList<String> remove) {
+      ImmutableList<String> remove,
+      boolean isWithAutoloads) {
     Map<String, Object> envBuilder = new LinkedHashMap<>(originalEnv);
     Map<String, Object> nativeBindings =
         convertNativeStructToMap((StarlarkInfo) envBuilder.remove("native"));
@@ -263,9 +280,48 @@ public class AutoloadSymbols {
       if (AUTOLOAD_CONFIG.get(symbol).isRule()) {
         nativeBindings.remove(symbol);
       } else {
-        envBuilder.remove(symbol);
+        if (symbol.equals("proto_common_do_not_use")
+            && envBuilder.get("proto_common_do_not_use") instanceof StarlarkInfo) {
+          // proto_common_do_not_use can't be completely removed, because the implementation of
+          // proto rules in protobuf still relies on INCOMPATIBLE_ENABLE_PROTO_TOOLCHAIN_RESOLUTION,
+          // that reads the build language flag.
+          envBuilder.put(
+              "proto_common_do_not_use",
+              StructProvider.STRUCT.create(
+                  ImmutableMap.of(
+                      "INCOMPATIBLE_ENABLE_PROTO_TOOLCHAIN_RESOLUTION",
+                      ((StarlarkInfo) envBuilder.get("proto_common_do_not_use"))
+                          .getValue("INCOMPATIBLE_ENABLE_PROTO_TOOLCHAIN_RESOLUTION")),
+                  "no native symbol '%s'"));
+        } else {
+          envBuilder.remove(symbol);
+        }
       }
     }
+
+    if (!isWithAutoloads) {
+      // In the repositories that don't have autoloads we also expose native.legacy_globals.
+      // Those can be used to fallback to the native symbol, whenever it's still available in Bazel.
+      // Fallback using a top-level symbol doesn't work, because BzlCompileFunction would throw an
+      // error when it's mentioned.
+      // legacy_globals aren't available when autoloads are not enabled. The feature is intended to
+      // be use with bazel_features repository, which can correctly report native symbols on all
+      // versions of Bazel.
+      ImmutableMap<String, Object> legacySymbols =
+          envBuilder.entrySet().stream()
+              .filter(entry -> AUTOLOAD_CONFIG.containsKey(entry.getKey()))
+              .collect(
+                  toImmutableMap(
+                      e -> e.getKey(),
+                      // Drop GuardedValue - it doesn't work on non-toplevel symbols
+                      e ->
+                          e.getValue() instanceof GuardedValue
+                              ? ((GuardedValue) e.getValue()).getObject()
+                              : e.getValue()));
+      nativeBindings.put(
+          "legacy_globals", StructProvider.STRUCT.create(legacySymbols, "no native symbol '%s'"));
+    }
+
     envBuilder.put(
         "native", StructProvider.STRUCT.create(nativeBindings, "no native function or rule '%s'"));
     return ImmutableMap.copyOf(envBuilder);
@@ -333,23 +389,91 @@ public class AutoloadSymbols {
   @Nullable
   public ImmutableMap<String, BzlLoadValue.Key> getLoadKeys(SkyFunction.Environment env)
       throws InterruptedException {
-    RepositoryMappingValue repositoryMappingValue =
-        (RepositoryMappingValue)
-            env.getValue(RepositoryMappingValue.key(RepositoryName.BAZEL_TOOLS));
 
-    if (repositoryMappingValue == null) {
-      return null;
+    final RepoContext repoContext;
+    ImmutableMap<String, ModuleKey> highestVersions = ImmutableMap.of();
+    if (bzlmodEnabled) {
+      BazelDepGraphValue bazelDepGraphValue =
+          (BazelDepGraphValue) env.getValue(BazelDepGraphValue.KEY);
+      if (bazelDepGraphValue == null) {
+        return null;
+      }
+
+      highestVersions =
+          bazelDepGraphValue.getCanonicalRepoNameLookup().values().stream()
+              .collect(
+                  toImmutableMap(
+                      ModuleKey::name,
+                      moduleKey -> moduleKey,
+                      (m1, m2) -> m1.version().compareTo(m2.version()) >= 0 ? m1 : m2));
+      RepositoryMapping repositoryMapping =
+          RepositoryMapping.create(
+              highestVersions.entrySet().stream()
+                  .collect(
+                      toImmutableMap(
+                          Map.Entry::getKey,
+                          entry ->
+                              bazelDepGraphValue
+                                  .getCanonicalRepoNameLookup()
+                                  .inverse()
+                                  .get(entry.getValue()))),
+              RepositoryName.MAIN);
+      repoContext = Label.RepoContext.of(RepositoryName.MAIN, repositoryMapping);
+    } else {
+      RepositoryMappingValue repositoryMappingValue =
+          (RepositoryMappingValue) env.getValue(RepositoryMappingValue.key(RepositoryName.MAIN));
+      if (repositoryMappingValue == null) {
+        return null;
+      }
+      // Create with owner, so that we can report missing references (isVisible is false if missing)
+      repoContext =
+          Label.RepoContext.of(
+              RepositoryName.MAIN,
+              RepositoryMapping.create(
+                  repositoryMappingValue.getRepositoryMapping().entries(), RepositoryName.MAIN));
     }
-
-    RepoContext repoContext =
-        Label.RepoContext.of(
-            RepositoryName.BAZEL_TOOLS, repositoryMappingValue.getRepositoryMapping());
 
     // Inject loads for rules and symbols removed from Bazel
     ImmutableMap.Builder<String, BzlLoadValue.Key> loadKeysBuilder =
         ImmutableMap.builderWithExpectedSize(autoloadedSymbols.size());
+    ImmutableSet.Builder<String> missingRepositories = ImmutableSet.builder();
     for (String symbol : autoloadedSymbols) {
-      loadKeysBuilder.put(symbol, AUTOLOAD_CONFIG.get(symbol).getKey(repoContext));
+      if (symbol.equals("proto_common_do_not_use")) {
+        // Special case that is not autoloaded, just removed
+        continue;
+      }
+
+      String requiredModule = AUTOLOAD_CONFIG.get(symbol).getModuleName();
+      // Skip if version doesn't have the rules
+      if (highestVersions.containsKey(requiredModule)
+          && requiredVersions.containsKey(requiredModule)) {
+        if (highestVersions
+                .get(requiredModule)
+                .version()
+                .compareTo(requiredVersions.get(requiredModule))
+            <= 0) {
+          missingRepositories.add(requiredModule);
+          continue;
+        }
+      }
+
+      Label label = AUTOLOAD_CONFIG.get(symbol).getLabel(repoContext);
+      // Only load if the dependency is present
+      if (label.getRepository().isVisible()) {
+        loadKeysBuilder.put(symbol, BzlLoadValue.keyForBuild(label));
+      } else {
+        missingRepositories.add(label.getRepository().getName());
+      }
+    }
+    for (String missingRepository : missingRepositories.build()) {
+      env.getListener()
+          .handle(
+              Event.warn(
+                  String.format(
+                      "Couldn't auto load rules or symbols, because no dependency on"
+                          + " module/repository '%s' found. This will result in a failure if"
+                          + " there's a reference to those rules or symbols.",
+                      missingRepository)));
     }
     return loadKeysBuilder.buildOrThrow();
   }
@@ -435,10 +559,13 @@ public class AutoloadSymbols {
 
     public abstract ImmutableSet<String> getRdeps();
 
-    public BzlLoadValue.Key getKey(RepoContext bazelToolsRepoContext) throws InterruptedException {
+    String getModuleName() throws InterruptedException {
+      return Label.parseCanonicalUnchecked(getLoadLabel()).getRepository().getName();
+    }
+
+    Label getLabel(RepoContext repoContext) throws InterruptedException {
       try {
-        return BzlLoadValue.keyForBuild(
-            Label.parseWithRepoContext(getLoadLabel(), bazelToolsRepoContext));
+        return Label.parseWithRepoContext(getLoadLabel(), repoContext);
       } catch (LabelSyntaxException e) {
         throw new IllegalStateException(e);
       }
@@ -468,10 +595,6 @@ public class AutoloadSymbols {
         label, false, newName, ImmutableSet.copyOf(rdeps));
   }
 
-  private static final String[] androidRules = {
-    "aar_import", "android_binary", "android_library", "android_local_test", "android_sdk"
-  };
-
   private static final ImmutableSet<String> PREDECLARED_REPOS_DISALLOWING_AUTOLOADS =
       ImmutableSet.of(
           "protobuf",
@@ -482,10 +605,24 @@ public class AutoloadSymbols {
           "rules_java_builtin",
           "rules_python",
           "rules_python_internal",
-          "rules_sh",
+          "rules_shell",
           "apple_common",
           "bazel_skylib",
-          "bazel_tools");
+          "bazel_tools",
+          "bazel_features");
+
+  private static final ImmutableMap<String, Version> requiredVersions;
+
+  static {
+    try {
+      requiredVersions =
+          ImmutableMap.of(
+              "protobuf", Version.parse("29.0-rc1"), //
+              "rules_android", Version.parse("0.6.0-rc1"));
+    } catch (ParseException e) {
+      throw new IllegalStateException(e);
+    }
+  }
 
   private static final ImmutableMap<String, SymbolRedirect> AUTOLOAD_CONFIG =
       ImmutableMap.<String, SymbolRedirect>builder()
@@ -498,7 +635,8 @@ public class AutoloadSymbols {
               symbolRedirect("@rules_cc//cc/common:cc_shared_library_hint_info.bzl", "cc_common"))
           .put(
               "cc_proto_aspect",
-              symbolRedirect("@protobuf//bazel/common:cc_proto_library.bzl", "cc_proto_library"))
+              symbolRedirect(
+                  "@protobuf//bazel/private:bazel_cc_proto_library.bzl", "cc_proto_aspect"))
           .put(
               "ProtoInfo",
               symbolRedirect(
@@ -510,10 +648,8 @@ public class AutoloadSymbols {
                   "java_proto_library",
                   "proto_lang_toolchain",
                   "java_binary",
-                  "py_extension",
                   "proto_common_do_not_use"))
-          .put(
-              "proto_common_do_not_use", symbolRedirect("@protobuf//bazel/common:proto_common.bzl"))
+          .put("proto_common_do_not_use", symbolRedirect(""))
           .put("cc_common", symbolRedirect("@rules_cc//cc/common:cc_common.bzl"))
           .put(
               "CcInfo",
@@ -576,76 +712,6 @@ public class AutoloadSymbols {
                   "java_import",
                   "android_binary",
                   "android_library"))
-          .put("android_common", symbolRedirect("@rules_android//rules:common.bzl"))
-          .put(
-              "AndroidIdeInfo", symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put("ApkInfo", symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidInstrumentationInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidResourcesInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidNativeLibsInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidApplicationResourceInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidBinaryNativeLibsInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidSdkInfo", symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidManifestInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidAssetsInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidLibraryAarInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidProguardInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidIdlInfo", symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidPreDexJarInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidCcLinkParamsInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "DataBindingV2Info",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidLibraryResourceClassJarProvider",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidFeatureFlagSet",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "ProguardMappingInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidBinaryData",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "BaselineProfileProvider",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidNeverLinkLibrariesProvider",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidOptimizedJarInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidDexInfo", symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
-          .put(
-              "AndroidOptimizationInfo",
-              symbolRedirect("@rules_android//rules:providers.bzl", androidRules))
           .put(
               "PyInfo",
               symbolRedirect(
@@ -665,10 +731,20 @@ public class AutoloadSymbols {
                   "py_binary",
                   "py_test",
                   "py_library"))
+          // Note: AndroidIdeInfo is intended to be autoloaded for ASwBazel/IntelliJ migration
+          // purposes. It is not intended to be used by other teams and projects, and is effectively
+          // an internal implementation detail.
+          .put(
+              "AndroidIdeInfo",
+              symbolRedirect(
+                  "@rules_android//providers:providers.bzl",
+                  "aar_import",
+                  "android_binary",
+                  "android_library",
+                  "android_local_test",
+                  "android_sdk"))
           .put("aar_import", ruleRedirect("@rules_android//rules:rules.bzl"))
           .put("android_binary", ruleRedirect("@rules_android//rules:rules.bzl"))
-          .put("android_device_script_fixture", ruleRedirect("@rules_android//rules:rules.bzl"))
-          .put("android_host_service_fixture", ruleRedirect("@rules_android//rules:rules.bzl"))
           .put("android_library", ruleRedirect("@rules_android//rules:rules.bzl"))
           .put("android_local_test", ruleRedirect("@rules_android//rules:rules.bzl"))
           .put("android_sdk", ruleRedirect("@rules_android//rules:rules.bzl"))
@@ -706,15 +782,15 @@ public class AutoloadSymbols {
               "propeller_optimize", ruleRedirect("@rules_cc//cc/toolchains:propeller_optimize.bzl"))
           .put(
               "proto_lang_toolchain",
-              ruleRedirect("@protobuf//bazel/toolchain:proto_lang_toolchain.bzl"))
+              ruleRedirect("@protobuf//bazel/toolchains:proto_lang_toolchain.bzl"))
           .put("proto_library", ruleRedirect("@protobuf//bazel:proto_library.bzl"))
           .put("py_binary", ruleRedirect("@rules_python//python:py_binary.bzl"))
           .put("py_library", ruleRedirect("@rules_python//python:py_library.bzl"))
           .put("py_runtime", ruleRedirect("@rules_python//python:py_runtime.bzl"))
           .put("py_test", ruleRedirect("@rules_python//python:py_test.bzl"))
-          .put("sh_binary", ruleRedirect("@rules_sh//sh:sh_binary.bzl"))
-          .put("sh_library", ruleRedirect("@rules_sh//sh:sh_library.bzl"))
-          .put("sh_test", ruleRedirect("@rules_sh//sh:sh_test.bzl"))
+          .put("sh_binary", ruleRedirect("@rules_shell//shell:sh_binary.bzl"))
+          .put("sh_library", ruleRedirect("@rules_shell//shell:sh_library.bzl"))
+          .put("sh_test", ruleRedirect("@rules_shell//shell:sh_test.bzl"))
           .put("available_xcodes", ruleRedirect("@apple_support//xcode:available_xcodes.bzl"))
           .put("xcode_config", ruleRedirect("@apple_support//xcode:xcode_config.bzl"))
           .put("xcode_config_alias", ruleRedirect("@apple_support//xcode:xcode_config_alias.bzl"))

@@ -57,6 +57,12 @@ public interface StarlarkRuleFunctionsApi {
           + " field of an <a href='../globals/bzl.html#aspect'>aspect</a> does, however, require"
           + " that providers are specified here.";
 
+  String DEPENDENCY_RESOLUTION_RULE_DOC =
+      "If set, the rule can be a dependency through attributes also marked as available in"
+          + " materializers. Every attribute of rules with this flag set must be marked as "
+          + " available in materializers also. This is so that rules so marked cannot depend on"
+          + " rules that are not so marked.";
+
   @StarlarkMethod(
       name = "provider",
       doc =
@@ -217,9 +223,8 @@ A dictionary of the attributes this macro supports, analogous to <a href="#rule.
 </code> (see the <a href=\"../toplevel/attr.html\">attr</a> module).
 
 <p>The special <code>name</code> attribute is predeclared and must not be included in the
-dictionary. There are also reserved attribute names that must not be included:
-<code>visibility</code>, <code>deprecation</code>, <code>tags</code>, <code>testonly</code>, and
-<code>features</code>.
+dictionary. The <code>visibility</code> attribute name is reserved and must not be included in the
+dictionary.
 
 <p>Attributes whose names start with <code>_</code> are private -- they cannot be passed at the call
 site of the rule. Such attributes can be assigned a default value (as in
@@ -248,6 +253,9 @@ site of the rule. Such attributes can be assigned a default value (as in
         // list of disallowed APIs to there.
         // TODO: #19922 - Make good on the above threat of enforcing a cap on the number of
         // attributes.
+        // TODO: #19922 - Add a mechanism to optionally automatically pre-populate attrs with
+        // common build rule attributes ("tags", "testonly", etc.), or to inherit the list of
+        // attributes of a given rule class.
         @Param(
             name = "finalizer",
             positional = false,
@@ -332,16 +340,19 @@ targets defined by any rule finalizer, including this one.
             positional = false,
             defaultValue = "{}",
             doc =
-                "dictionary to declare all the attributes of the rule. It maps from an attribute"
-                    + " name to an attribute object (see <a href=\"../toplevel/attr.html\">attr</a>"
-                    + " module). Attributes starting with <code>_</code> are private, and can be"
-                    + " used to add an implicit dependency on a label. The attribute"
-                    + " <code>name</code> is implicitly added and must not be specified. Attributes"
-                    + " <code>visibility</code>, <code>deprecation</code>, <code>tags</code>,"
-                    + " <code>testonly</code>, and <code>features</code> are implicitly added and"
-                    + " cannot be overridden. Most rules need only a handful of attributes. To"
-                    + " limit memory usage, there is a cap on the number of attributes that may be"
-                    + " declared."),
+                """
+A dictionary to declare all the attributes of the rule. It maps from an attribute \
+name to an attribute object (see
+<a href="../toplevel/attr.html"><code>attr</code></a> module). Attributes starting \
+with <code>_</code> are private, and can be used to add an implicit dependency on \
+a label. The attribute <code>name</code> is implicitly added and must not be \
+specified. Attributes <code>visibility</code>, <code>deprecation</code>, \
+<code>tags</code>, <code>testonly</code>, and <code>features</code> are implicitly \
+added and cannot be overridden. Most rules need only a handful of attributes. To \
+limit memory usage, there is a cap on the number of attributes that may be \
+declared.
+<p>Declared attributes will convert <code>None</code> to the default value.</p>
+"""),
         // TODO(bazel-team): need to give the types of these builtin attributes
         @Param(
             name = "outputs",
@@ -488,6 +499,12 @@ targets defined by any rule finalizer, including this one.
             positional = false,
             defaultValue = "[]",
             doc = PROVIDES_DOC),
+        @Param(
+            name = "dependency_resolution_rule",
+            named = true,
+            positional = false,
+            defaultValue = "False",
+            doc = DEPENDENCY_RESOLUTION_RULE_DOC),
         @Param(
             name = EXEC_COMPATIBLE_WITH_PARAM,
             allowedTypes = {@ParamType(type = Sequence.class, generic1 = String.class)},
@@ -636,6 +653,7 @@ targets defined by any rule finalizer, including this one.
       boolean useToolchainTransition,
       Object doc,
       Sequence<?> providesArg,
+      boolean dependencyResolutionRule,
       Sequence<?> execCompatibleWith,
       boolean analysisTest,
       Object buildSetting,
@@ -682,7 +700,7 @@ targets defined by any rule finalizer, including this one.
             named = true,
             defaultValue = "[]",
             doc =
-                "Experimental: List of toolchain types. The aspect propagates to target"
+                "List of toolchain types. The aspect propagates to target"
                     + " toolchains which match these toolchain types."),
         @Param(
             name = "attrs",
@@ -692,17 +710,20 @@ targets defined by any rule finalizer, including this one.
             named = true,
             defaultValue = "{}",
             doc =
-                "A dictionary declaring all the attributes of the aspect. It maps from an attribute"
-                    + " name to an attribute object, like `attr.label` or `attr.string` (see <a"
-                    + " href=\"../toplevel/attr.html\">attr</a> module). Aspect attributes are"
-                    + " available to implementation function as fields of <code>ctx</code>"
-                    + " parameter. <p>Implicit attributes starting with <code>_</code> must have"
-                    + " default values, and have type <code>label</code> or"
-                    + " <code>label_list</code>. <p>Explicit attributes must have type"
-                    + " <code>string</code>, and must use the <code>values</code> restriction."
-                    + " Explicit attributes restrict the aspect to only be used with rules that"
-                    + " have attributes of the same name, type, and valid values according to the"
-                    + " restriction."),
+                """
+                A dictionary declaring all the attributes of the aspect. It maps from an \
+                attribute name to an attribute object, like <code>attr.label</code> or \
+                <code>attr.string</code> (see \
+                <a href="../toplevel/attr.html"><code>attr</code></a> module). Aspect attributes \
+                are available to implementation function as fields of <code>ctx</code> parameter. \
+                <p>Implicit attributes starting with <code>_</code> must have default values, and \
+                have type <code>label</code> or <code>label_list</code>.</p> \
+                <p>Explicit attributes must have type <code>string</code>, and must use the \
+                <code>values</code> restriction. Explicit attributes restrict the aspect to only \
+                be used with rules that have attributes of the same name, type, and valid values \
+                according to the restriction.</p>
+                <p>Declared attributes will convert <code>None</code> to the default value.</p>
+                """),
         @Param(
             name = "required_providers",
             named = true,

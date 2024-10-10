@@ -59,7 +59,6 @@ import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.InputMetadataProvider;
 import com.google.devtools.build.lib.actions.MapBasedActionGraph;
 import com.google.devtools.build.lib.actions.MiddlemanAction;
-import com.google.devtools.build.lib.actions.MiddlemanFactory;
 import com.google.devtools.build.lib.actions.MutableActionGraph;
 import com.google.devtools.build.lib.actions.ParameterFile;
 import com.google.devtools.build.lib.actions.RunfilesTree;
@@ -134,7 +133,6 @@ import com.google.devtools.build.lib.packages.PackageValidator;
 import com.google.devtools.build.lib.packages.RawAttributeMapper;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
-import com.google.devtools.build.lib.packages.RuleVisibility;
 import com.google.devtools.build.lib.packages.StarlarkInfo;
 import com.google.devtools.build.lib.packages.StarlarkProvider;
 import com.google.devtools.build.lib.packages.Target;
@@ -352,7 +350,6 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
       SkyframeExecutorTestHelper.process(skyframeExecutor);
     }
     skyframeExecutor.injectExtraPrecomputedValues(extraPrecomputedValues);
-    packageOptions.defaultVisibility = RuleVisibility.PUBLIC;
     packageOptions.showLoadingProgress = true;
     packageOptions.globbingThreads = 7;
     skyframeExecutor.preparePackageLoading(
@@ -520,7 +517,9 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     skyframeExecutor.injectExtraPrecomputedValues(
         ImmutableList.of(
             PrecomputedValue.injected(
-                RepositoryDelegatorFunction.RESOLVED_FILE_INSTEAD_OF_WORKSPACE, Optional.empty())));
+                RepositoryDelegatorFunction.RESOLVED_FILE_INSTEAD_OF_WORKSPACE, Optional.empty()),
+            PrecomputedValue.injected(
+                RepositoryDelegatorFunction.VENDOR_DIRECTORY, Optional.empty())));
   }
 
   protected void setPackageOptions(String... options) throws Exception {
@@ -535,9 +534,17 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     invalidatePackages(/* alsoConfigs= */ false);
   }
 
-  private static PackageOptions parsePackageOptions(String... options) throws Exception {
+  /**
+   * Override to change the default visibility for a test suite. Visibility can also be controlled
+   * with {@link #setPackageOptions}.
+   */
+  protected String getDefaultVisibility() {
+    return "public";
+  }
+
+  private PackageOptions parsePackageOptions(String... options) throws Exception {
     OptionsParser parser = OptionsParser.builder().optionsClasses(PackageOptions.class).build();
-    parser.parse("--default_visibility=public");
+    parser.parse("--default_visibility=" + getDefaultVisibility());
     parser.parse(options);
     return parser.getOptions(PackageOptions.class);
   }
@@ -659,7 +666,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     skyframeExecutor.handleAnalysisInvalidatingChange();
 
     view = new BuildViewForTesting(directories, ruleClassProvider, skyframeExecutor, null);
-    view.setConfigurationForTesting(event -> {}, targetConfig);
+    view.setConfigurationForTesting(targetConfig);
 
     view.setArtifactRoots(new PackageRootsNoSymlinkCreation(Root.fromPath(rootDirectory)));
   }
@@ -2112,6 +2119,11 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     }
 
     @Override
+    public SpecialArtifact getRunfilesArtifact(PathFragment rootRelativePath, ArtifactRoot root) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
     public SpecialArtifact getTreeArtifact(PathFragment rootRelativePath, ArtifactRoot root) {
       throw new UnsupportedOperationException();
     }
@@ -2124,11 +2136,6 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     @Override
     public ExtendedEventHandler getEventHandler() {
       return reporter;
-    }
-
-    @Override
-    public MiddlemanFactory getMiddlemanFactory() {
-      throw new UnsupportedOperationException();
     }
 
     @Override

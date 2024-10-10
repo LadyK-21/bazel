@@ -60,6 +60,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 import com.google.common.eventbus.EventBus;
 import com.google.common.util.concurrent.ListeningScheduledExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -311,6 +312,8 @@ public class RemoteSpawnRunnerWithGrpcRemoteExecutorTest {
                         .build();
                 ServerCapabilities caps =
                     ServerCapabilities.newBuilder()
+                        .setLowApiVersion(ApiVersion.low.toSemVer())
+                        .setHighApiVersion(ApiVersion.high.toSemVer())
                         .setExecutionCapabilities(
                             ExecutionCapabilities.newBuilder().setExecEnabled(true).build())
                         .build();
@@ -331,7 +334,9 @@ public class RemoteSpawnRunnerWithGrpcRemoteExecutorTest {
     GrpcCacheClient cacheProtocol =
         new GrpcCacheClient(
             channel.retain(), callCredentialsProvider, remoteOptions, retrier, DIGEST_UTIL);
-    remoteCache = new RemoteExecutionCache(cacheProtocol, remoteOptions, DIGEST_UTIL);
+    remoteCache =
+        new RemoteExecutionCache(
+            cacheProtocol, /* diskCacheClient= */ null, remoteOptions, DIGEST_UTIL);
     RemoteExecutionService remoteExecutionService =
         new RemoteExecutionService(
             directExecutor(),
@@ -348,7 +353,8 @@ public class RemoteSpawnRunnerWithGrpcRemoteExecutorTest {
             tempPathGenerator,
             /* captureCorruptedOutputsDir= */ null,
             remoteOutputChecker,
-            mock(OutputService.class));
+            mock(OutputService.class),
+            Sets.newConcurrentHashSet());
     client =
         new RemoteSpawnRunner(
             execRoot,
@@ -371,7 +377,6 @@ public class RemoteSpawnRunnerWithGrpcRemoteExecutorTest {
                     .setName("VARIABLE")
                     .setValue("value")
                     .build())
-            .addAllOutputFiles(ImmutableList.of("bar", "foo"))
             .addAllOutputPaths(ImmutableList.of("bar", "foo"))
             .build();
     cmdDigest = DIGEST_UTIL.compute(command);

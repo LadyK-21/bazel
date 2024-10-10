@@ -59,13 +59,6 @@ msys*)
   ;;
 esac
 
-if "$is_windows"; then
-  # Disable MSYS path conversion that converts path-looking command arguments to
-  # Windows paths (even if they arguments are not in fact paths).
-  export MSYS_NO_PATHCONV=1
-  export MSYS2_ARG_CONV_EXCL="*"
-fi
-
 function test_sh_test() {
   mkdir -p a
   cat > a/BUILD <<EOF
@@ -511,22 +504,6 @@ EOF
 
   touch a/f
   bazel build //a:a || fail "build failed"
-}
-
-function test_visibility() {
-  mkdir visibility
-  cat > visibility/BUILD <<EOF
-cc_library(
-  name = "foo",
-  visibility = [
-    "//foo/bar:__pkg__",
-    "//visibility:public",
-  ],
-)
-EOF
-
-  bazel build //visibility:foo &> $TEST_log && fail "Expected failure" || true
-  expect_log "//visibility:public and //visibility:private cannot be used in combination with other labels"
 }
 
 function test_executable_without_default_files() {

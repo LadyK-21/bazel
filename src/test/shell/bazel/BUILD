@@ -32,6 +32,10 @@ filegroup(
         ":test-deps-wo-bazel",
         "//src:bazel",
         "//src/test/shell:bin/bazel",
+        "//third_party/protobuf:add_python_loads.patch",
+        "//third_party/protobuf:add_rules_shell_loads.patch",
+        "//third_party/protobuf:proto_info_bzl_deps.patch",
+        "//third_party/protobuf:remove_rules_rust.patch",
     ],
     visibility = [
         "//src/main/starlark/tests/builtins_bzl:__subpackages__",
@@ -105,7 +109,9 @@ sh_test(
         "@bazel_tools//tools/bash/runfiles",
     ],
     shard_count = 3,
-    tags = ["no_windows"],
+    tags = [
+        "no_windows",
+    ],
     toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
@@ -272,6 +278,7 @@ sh_test(
         "@bazel_tools//tools/bash/runfiles",
     ],
     exec_compatible_with = ["//:highcpu_machine"],
+    shard_count = 2,
     tags = [
         "requires-network",  # For Bzlmod
     ],
@@ -304,6 +311,7 @@ JAVA_VERSIONS_COVERAGE = ("11", "17", "21")
             "@bazel_tools//tools/bash/runfiles",
         ],
         exec_compatible_with = ["//:highcpu_machine"],
+        shard_count = 2,
         tags = [
             "requires-network",  # For Bzlmod
         ],
@@ -384,6 +392,7 @@ sh_test(
     srcs = ["bazel_proto_library_test.sh"],
     data = [":test-deps"],
     exec_compatible_with = ["//:highcpu_machine"],
+    shard_count = 2,
     tags = [
         "no_windows",  # Doesn't work on Windows for unknown reason
         "requires-network",  # Allow this test to access internet to fetch rules_proto dependencies.
@@ -434,11 +443,13 @@ sh_test(
 
 sh_test(
     name = "bazel_rules_cc_test",
+    timeout = "eternal",
     srcs = ["bazel_rules_cc_test.sh"],
     data = [
         ":test-deps",
         "@bazel_tools//tools/bash/runfiles",
     ],
+    tags = ["requires-network"],
 )
 
 sh_test(
@@ -597,6 +608,7 @@ sh_test(
     srcs = ["bazel_coverage_hermetic_py_test.sh"],
     data = [":test-deps"],
     tags = [
+        "manual",  # Bug: https://github.com/bazelbuild/rules_python/issues/2248
         "no_windows",
     ],
 )
@@ -826,7 +838,9 @@ sh_test(
     srcs = ["local_repository_test.sh"],
     data = [":test-deps"],
     shard_count = 3,
-    tags = ["no_windows"],
+    tags = [
+        "no_windows",
+    ],
 )
 
 sh_test(
@@ -896,7 +910,7 @@ sh_test(
 
 sh_test(
     name = "disk_cache_test",
-    size = "small",
+    size = "medium",
     srcs = ["disk_cache_test.sh"],
     data = [":test-deps"],
     tags = ["no_windows"],
@@ -982,8 +996,8 @@ sh_test(
     ],
     shard_count = 22,
     tags = [
-        "block-network",
         "no_windows",
+        "requires-network",  # rules_python are needed and are hard to mock out
     ],
 )
 
@@ -993,7 +1007,9 @@ sh_test(
     srcs = ["cc_integration_test.sh"],
     data = [":test-deps"],
     shard_count = 10,
-    tags = ["no_windows"],
+    tags = [
+        "no_windows",
+    ],
 )
 
 sh_test(
@@ -1135,7 +1151,9 @@ sh_test(
         "//src:bazel",
         "@bazel_tools//tools/bash/runfiles",
     ],
-    tags = ["no_windows"],
+    tags = [
+        "no_windows",
+    ],
     toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
@@ -1230,7 +1248,9 @@ sh_test(
     srcs = ["java_launcher_test.sh"],
     args = ["$(JAVABASE)"],
     data = [":test-deps"],
-    tags = ["no_windows"],
+    tags = [
+        "no_windows",
+    ],
     toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
@@ -1348,6 +1368,7 @@ sh_test(
 
 sh_test(
     name = "path_mapping_test",
+    size = "large",
     srcs = ["path_mapping_test.sh"],
     data = [
         ":test-deps",
@@ -1425,4 +1446,14 @@ sh_test(
         "@bazel_tools//tools/bash/runfiles",
     ],
     tags = ["no_windows"],
+)
+
+sh_test(
+    name = "profile_test",
+    size = "small",
+    srcs = ["profile_test.sh"],
+    data = [
+        ":test-deps",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )

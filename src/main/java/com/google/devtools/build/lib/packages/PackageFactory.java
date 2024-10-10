@@ -219,6 +219,8 @@ public final class PackageFactory {
         workspaceName,
         mainRepoMapping,
         starlarkSemantics.getBool(BuildLanguageOptions.INCOMPATIBLE_NO_IMPLICIT_FILE_EXPORT),
+        starlarkSemantics.getBool(
+            BuildLanguageOptions.INCOMPATIBLE_SIMPLIFY_UNCONDITIONAL_SELECTS_IN_RULE_ATTRS),
         packageOverheadEstimator);
   }
 
@@ -247,13 +249,16 @@ public final class PackageFactory {
         associatedModuleName,
         associatedModuleVersion,
         starlarkSemantics.getBool(BuildLanguageOptions.INCOMPATIBLE_NO_IMPLICIT_FILE_EXPORT),
+        starlarkSemantics.getBool(
+            BuildLanguageOptions.INCOMPATIBLE_SIMPLIFY_UNCONDITIONAL_SELECTS_IN_RULE_ATTRS),
         repositoryMapping,
         mainRepositoryMapping,
         cpuBoundSemaphore,
         packageOverheadEstimator,
         generatorMap,
         configSettingVisibilityPolicy,
-        globber);
+        globber,
+        /* enableNameConflictChecking= */ true);
   }
 
   /** Returns a new {@link NonSkyframeGlobber}. */
@@ -405,6 +410,7 @@ public final class PackageFactory {
       // StarlarkRuleClassFunctions#createRule. So we set it here as a thread-local to be retrieved
       // by StarlarkTestingModule#analysisTest.
       thread.setThreadLocal(RuleDefinitionEnvironment.class, ruleClassProvider);
+      packageValidator.configureThreadWhileLoading(thread);
 
       try {
         Starlark.execFileProgram(buildFileProgram, module, thread);

@@ -38,8 +38,10 @@ import com.google.devtools.build.lib.actions.util.ActionsTestUtil;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.OutputGroupInfo;
+import com.google.devtools.build.lib.analysis.RunfilesProvider;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.CompilationMode;
+import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesInfo;
 import com.google.devtools.build.lib.analysis.util.AnalysisMock;
@@ -61,7 +63,6 @@ import com.google.devtools.build.lib.rules.cpp.CcToolchainProvider;
 import com.google.devtools.build.lib.rules.cpp.CppCompileAction;
 import com.google.devtools.build.lib.rules.cpp.CppRuleClasses;
 import com.google.devtools.build.lib.rules.cpp.LibraryToLink;
-import com.google.devtools.common.options.OptionsParsingException;
 import java.util.Collection;
 import java.util.List;
 import org.junit.Test;
@@ -363,6 +364,18 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
     assertThat(compileActionA.getArguments()).doesNotContain("--DBG_ONLY_FLAG");
     assertThat(compileActionA.getArguments()).doesNotContain("--FASTBUILD_ONLY_FLAG");
     assertThat(compileActionA.getArguments()).contains("--OPT_ONLY_FLAG");
+  }
+
+  @Test
+  public void testCreate_runfilesWithSourcesOnly() throws Exception {
+    ConfiguredTarget target =
+        createLibraryTargetWriter("//objc:One")
+            .setAndCreateFiles("srcs", "a.m", "b.m", "private.h")
+            .write();
+    RunfilesProvider provider = target.getProvider(RunfilesProvider.class);
+    assertThat(baseArtifactNames(provider.getDefaultRunfiles().getArtifacts())).isEmpty();
+    assertThat(Artifact.toRootRelativePaths(provider.getDataRunfiles().getArtifacts()))
+        .containsExactly("objc/libOne.a");
   }
 
   @Test
@@ -672,6 +685,20 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
   }
 
   @Test
+  public void testObjcCxxopts_argumentOrdering() throws Exception {
+    useConfiguration("--objccopt=-foo", "--cxxopt=-cxxfoo");
+    createLibraryTargetWriter("//lib:lib")
+        .setAndCreateFiles("srcs", "a.mm", "b.m", "private.h")
+        .setList("copts", "-bar")
+        .write();
+    List<String> aArgs = compileAction("//lib:lib", "a.o").getArguments();
+    assertThat(aArgs).containsAtLeast("-fobjc-arc", "-cxxfoo", "-foo", "-bar").inOrder();
+    List<String> bArgs = compileAction("//lib:lib", "b.o").getArguments();
+    assertThat(bArgs).containsAtLeast("-fobjc-arc", "-foo", "-bar").inOrder();
+    assertThat(bArgs).doesNotContain("-cxxfoo");
+  }
+
+  @Test
   public void testBothModuleNameAndModuleMapGivesError() throws Exception {
     checkError(
         "x",
@@ -799,9 +826,7 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
 
   @Test
   public void testPropagatesDefinesToDependersTransitively() throws Exception {
-    useConfiguration(
-        "--apple_platform_type=ios",
-        "--platforms=" + MockObjcSupport.IOS_X86_64);
+    useConfiguration("--apple_platform_type=ios", "--platforms=" + MockObjcSupport.IOS_X86_64);
     createLibraryTargetWriter("//lib1:lib1")
         .setAndCreateFiles("srcs", "a.m")
         .setAndCreateFiles("non_arc_srcs", "b.m")
@@ -1095,8 +1120,9 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
 
   @Test
   public void testIosSdkVersionCannotBeDefinedButEmpty() {
-    OptionsParsingException e =
-        assertThrows(OptionsParsingException.class, () -> useConfiguration("--ios_sdk_version="));
+    var e =
+        assertThrows(
+            InvalidConfigurationException.class, () -> useConfiguration("--ios_sdk_version="));
     assertThat(e).hasMessageThat().contains("--ios_sdk_version");
   }
 
@@ -1516,8 +1542,8 @@ public class ObjcLibraryTest extends ObjcRuleTestCase {
     assertAppleSdkPlatformEnv(action, "iPhoneOS");
   }
 
-  private StructImpl getJ2ObjcInfoFromTarget(ConfiguredTarget configuredTarget, String providerName)
-      throws Exception {
+  private static StructImpl getJ2ObjcInfoFromTarget(
+      ConfiguredTarget configuredTarget, String providerName) throws Exception {
     Provider.Key key =
         new StarlarkProvider.Key(
             keyForBuiltins(Label.parseCanonical("@_builtins//:common/objc/providers.bzl")),
