@@ -614,6 +614,8 @@ java_library(
         ":config/build_options",
         ":config/core_options",
         ":config/invalid_configuration_exception",
+        ":project_resolution_exception",
+        "//src/main/java/com/google/devtools/build/lib:runtime/config_flag_definitions",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
         "//src/main/java/com/google/devtools/build/lib/events",
         "//src/main/java/com/google/devtools/build/lib/skyframe:project_files_lookup_value",
@@ -626,6 +628,11 @@ java_library(
         "//third_party:guava",
         "//third_party:jsr305",
     ],
+)
+
+java_library(
+    name = "project_resolution_exception",
+    srcs = ["ProjectResolutionException.java"],
 )
 
 java_library(
@@ -1758,6 +1765,7 @@ java_library(
     ],
     deps = [
         ":config/fragment_options",
+        ":config/scope",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization:visible-for-serialization",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization/autocodec",
@@ -2909,6 +2917,15 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/skyframe:configured_target_key",
         "//src/main/java/com/google/devtools/build/lib/skyframe:prerequisite_package_function",
         "//src/main/java/com/google/devtools/build/lib/skyframe/config",
+        "//third_party:guava",
+        "//third_party:jsr305",
+    ],
+)
+
+java_library(
+    name = "config/scope",
+    srcs = ["config/Scope.java"],
+    deps = [
         "//third_party:guava",
         "//third_party:jsr305",
     ],
