@@ -27,6 +27,7 @@ java_library(
     name = "dependencies_provider",
     srcs = ["RemoteAnalysisCachingDependenciesProvider.java"],
     deps = [
+        ":options",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization",
         "//src/main/java/com/google/devtools/build/lib/vfs",
@@ -62,6 +63,7 @@ java_library(
     deps = [
         ":dependencies_provider",
         ":event_listener",
+        ":options",
         "//src/main/java/com/google/devtools/build/lib/actions:action_lookup_data",
         "//src/main/java/com/google/devtools/build/lib/actions:action_lookup_key",
         "//src/main/java/com/google/devtools/build/lib/actions:artifacts",
@@ -112,9 +114,11 @@ java_library(
     ],
     deps = [
         ":file_dependency_key_support",
-        ":settable_future_with_ownership",
+        ":value_or_future_map",
         "//src/main/java/com/google/devtools/build/lib/concurrent",
+        "//src/main/java/com/google/devtools/build/lib/concurrent:settable_future_keyed_value",
         "//src/main/java/com/google/devtools/build/lib/skyframe/serialization",
+        "//src/main/java/com/google/devtools/build/lib/versioning:long_version_getter",
         "//src/main/java/com/google/devtools/build/lib/vfs:ospathpolicy",
         "//src/main/java/com/google/devtools/build/lib/vfs:pathfragment",
         "//src/main/protobuf:file_invalidation_data_java_proto",
@@ -124,12 +128,6 @@ java_library(
         "//third_party:jsr305",
         "@com_google_protobuf//:protobuf_java",
     ],
-)
-
-java_library(
-    name = "settable_future_with_ownership",
-    srcs = ["SettableFutureWithOwnership.java"],
-    deps = ["//third_party:guava"],
 )
 
 java_library(
@@ -147,6 +145,18 @@ java_library(
     srcs = ["RemoteAnalysisCachingOptions.java"],
     deps = [
         "//src/main/java/com/google/devtools/common/options",
+    ],
+)
+
+java_library(
+    name = "value_or_future_map",
+    srcs = [
+        "AbstractValueOrFutureMap.java",
+        "ValueOrFutureMap.java",
+    ],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib/concurrent:settable_future_keyed_value",
+        "//third_party:guava",
     ],
 )
 

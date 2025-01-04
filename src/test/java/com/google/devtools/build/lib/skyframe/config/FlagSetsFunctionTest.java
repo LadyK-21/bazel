@@ -19,12 +19,14 @@ import static org.junit.Assert.assertThrows;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
-import com.google.devtools.build.lib.analysis.PlatformOptions;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
 import com.google.devtools.build.lib.analysis.util.DummyTestFragment;
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.events.Event;
+import com.google.devtools.build.lib.events.EventKind;
 import com.google.devtools.build.lib.rules.repository.RepositoryDelegatorFunction;
+import com.google.devtools.build.lib.runtime.ConfigFlagDefinitions;
 import com.google.devtools.build.lib.skyframe.PrecomputedValue;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.util.SkyframeExecutorTestUtils;
@@ -48,6 +50,26 @@ public final class FlagSetsFunctionTest extends BuildViewTestCase {
   }
 
   /**
+   * Asserts a {@link FlagSetValue} contains a given kind of event with a given message that
+   * occurred a given number of times.
+   *
+   * <p>Only applies to messages that are expected to persistently display, even on Skyframe cache
+   * hits: see {@link FlagSetValue#getPersistentMessages}.
+   */
+  private void assertContainsPersistentMessage(
+      FlagSetValue value, EventKind kind, int frequency, String message) {
+    int count = 0;
+    for (Event event : value.getPersistentMessages()) {
+      if (event.getKind() != kind) {
+        continue;
+      }
+      count++;
+      assertThat(event.getMessage()).contains(message);
+    }
+    assertThat(count).isEqualTo(frequency);
+  }
+
+  /**
    * Given "//foo:myflag" and "default_value", creates the BUILD and .bzl files to realize a
    * string_flag with that label and default value.
    */
@@ -57,8 +79,14 @@ public final class FlagSetsFunctionTest extends BuildViewTestCase {
     scratch.file(
         flagDir + "/build_settings.bzl",
         """
-string_flag = rule(implementation = lambda ctx: [], build_setting = config.string(flag = True))
-""");
+        string_flag = rule(
+            implementation = lambda ctx: [],
+            build_setting = config.string(flag = True),
+            attrs = {
+                "scope": attr.string(default = "universal"),
+            },
+        )
+        """);
     scratch.file(
         flagDir + "/BUILD",
         """
@@ -98,11 +126,12 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
     FlagSetValue flagSetsValue = executeFunction(key);
     // expects the modified BuildOptions
-    assertThat(flagSetsValue.getTopLevelBuildOptions().get(PlatformOptions.class).platforms)
-        .containsExactly(Label.parseCanonical("//buildenv/platforms/android:x86"));
+    assertThat(flagSetsValue.getOptionsFromFlagset())
+        .containsExactly("--platforms=//buildenv/platforms/android:x86");
   }
 
   @Test
@@ -133,11 +162,12 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "unknown_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ false);
     FlagSetValue flagSetsValue = executeFunction(key);
 
     // expects the original BuildOptions
-    assertThat(flagSetsValue.getTopLevelBuildOptions()).isEqualTo(buildOptions);
+    assertThat(flagSetsValue.getOptionsFromFlagset()).isEmpty();
   }
 
   @Test
@@ -152,11 +182,12 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ false);
     FlagSetValue flagSetsValue = executeFunction(key);
 
     // expects the original BuildOptions
-    assertThat(flagSetsValue.getTopLevelBuildOptions()).isEqualTo(buildOptions);
+    assertThat(flagSetsValue.getOptionsFromFlagset()).isEmpty();
   }
 
   @Test
@@ -187,6 +218,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
     assertThat(thrown)
@@ -208,11 +240,12 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "random_config_name",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ false);
     FlagSetValue flagSetsValue = executeFunction(key);
 
     // Without enforced configs, unknown configs are a no-op.
-    assertThat(flagSetsValue.getTopLevelBuildOptions()).isEqualTo(buildOptions);
+    assertThat(flagSetsValue.getOptionsFromFlagset()).isEmpty();
     assertContainsEvent("Ignoring --scl_config=random_config_name");
   }
 
@@ -238,11 +271,12 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ false);
 
     FlagSetValue flagSetsValue = executeFunction(key);
 
-    assertThat(flagSetsValue.getTopLevelBuildOptions()).isEqualTo(buildOptions);
+    assertThat(flagSetsValue.getOptionsFromFlagset()).isEmpty();
     assertContainsEvent(
         "Ignoring --scl_config=test_config because --enforce_project_configs is not set");
   }
@@ -261,10 +295,11 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "fake_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ false);
     FlagSetValue flagSetsValue = executeFunction(key);
 
-    assertThat(flagSetsValue.getTopLevelBuildOptions()).isEqualTo(buildOptions);
+    assertThat(flagSetsValue.getOptionsFromFlagset()).isEmpty();
   }
 
   @Test
@@ -292,19 +327,17 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "other_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
     FlagSetValue flagSetsValue = executeFunction(key);
 
-    assertThat(
-            flagSetsValue
-                .getTopLevelBuildOptions()
-                .getStarlarkOptions()
-                .get(Label.parseCanonical("//test:myflag")))
-        .isEqualTo("other_config_value");
-
-    assertContainsEvent("Applying flags from the config 'other_config'");
-    // TODO: b/380581463 - Reenable the frequency check once the initial event is deduplicated.
-    // assertContainsEventWithFrequency("Applying flags from the config 'other_config'", 1);
+    assertThat(flagSetsValue.getOptionsFromFlagset())
+        .contains("--//test:myflag=other_config_value");
+    assertContainsPersistentMessage(
+        flagSetsValue,
+        EventKind.INFO,
+        /* frequency= */ 1,
+        "Applying flags from the config 'other_config'");
   }
 
   @Test
@@ -343,6 +376,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of("--define=foo=bar", ""),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -385,10 +419,13 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of("--define=foo=bar", ""),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
-    var unused = executeFunction(key);
-    assertContainsEvent(
+    assertContainsPersistentMessage(
+        executeFunction(key),
+        EventKind.WARNING,
+        /* frequency= */ 1,
         "also sets output-affecting flags in the command line or user bazelrc:"
             + " ['--define=foo=bar']");
   }
@@ -429,10 +466,13 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of("--define=foo=bar", ""),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
-    var unused = executeFunction(key);
-    assertContainsEvent(
+    assertContainsPersistentMessage(
+        executeFunction(key),
+        EventKind.WARNING,
+        /* frequency= */ 1,
         "also sets output-affecting flags in the command line or user bazelrc:"
             + " ['--define=foo=bar']");
   }
@@ -478,6 +518,7 @@ project = {
             buildOptions,
             /* userOptions= */ ImmutableMap.of(
                 "--//test:myflag=other_value", "", "--//test:other_flag=test_config_value", ""),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -504,6 +545,7 @@ project = {
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -533,6 +575,7 @@ project = {
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -562,6 +605,7 @@ project = {
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -575,8 +619,14 @@ project = {
     scratch.file(
         "test/build_settings.bzl",
         """
-string_flag = rule(implementation = lambda ctx: [], build_setting = config.string(flag = True))
-""");
+        string_flag = rule(
+            implementation = lambda ctx: [],
+            build_setting = config.string(flag = True),
+            attrs = {
+                "scope": attr.string(default = "universal"),
+            },
+        )
+        """);
     scratch.file(
         "test/BUILD",
         """
@@ -605,6 +655,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "test_config",
             createBuildOptions(), // this is a fake flag so don't add it here.
             /* userOptions= */ ImmutableMap.of("--bar", "--config=foo"),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -617,8 +668,14 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
     scratch.file(
         "test/build_settings.bzl",
         """
-string_flag = rule(implementation = lambda ctx: [], build_setting = config.string(flag = True))
-""");
+        string_flag = rule(
+            implementation = lambda ctx: [],
+            build_setting = config.string(flag = True),
+            attrs = {
+                "scope": attr.string(default = "universal"),
+            },
+        )
+        """);
     scratch.file(
         "test/BUILD",
         """
@@ -647,6 +704,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of("--//test:myflag=other_value", ""),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -658,8 +716,14 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
     scratch.file(
         "test/build_settings.bzl",
         """
-string_flag = rule(implementation = lambda ctx: [], build_setting = config.string(flag = True))
-""");
+        string_flag = rule(
+            implementation = lambda ctx: [],
+            build_setting = config.string(flag = True),
+            attrs = {
+                "scope": attr.string(default = "universal"),
+            },
+        )
+        """);
     scratch.file(
         "test/BUILD",
         """
@@ -687,6 +751,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of("--//test:myflag=test_config_value", ""),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var unused = executeFunction(key);
@@ -698,8 +763,14 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
     scratch.file(
         "test/build_settings.bzl",
         """
-string_flag = rule(implementation = lambda ctx: [], build_setting = config.string(flag = True))
-""");
+        string_flag = rule(
+            implementation = lambda ctx: [],
+            build_setting = config.string(flag = True),
+            attrs = {
+                "scope": attr.string(default = "universal"),
+            },
+        )
+        """);
     scratch.file(
         "test/BUILD",
         """
@@ -735,6 +806,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             buildOptions,
             /* userOptions= */ ImmutableMap.of(
                 "--//test:starlark_flags_always_affect_configuration=yes_they_do", ""),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -748,8 +820,14 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
     scratch.file(
         "test/build_settings.bzl",
         """
-string_flag = rule(implementation = lambda ctx: [], build_setting = config.string(flag = True))
-""");
+        string_flag = rule(
+            implementation = lambda ctx: [],
+            build_setting = config.string(flag = True),
+            attrs = {
+                "scope": attr.string(default = "universal"),
+            },
+        )
+        """);
     scratch.file(
         "test/BUILD",
         """
@@ -787,6 +865,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             buildOptions,
             /* userOptions= */ ImmutableMap.of(
                 "--test_filter=foo", "", "--cache_test_results=true", "", "--test_arg=blah", ""),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var unused = executeFunction(key);
@@ -828,6 +907,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "test_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of("--define=foo=bar", ""),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ false);
 
     var unused = executeFunction(key);
@@ -857,6 +937,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             "non_existent_config",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -889,6 +970,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             /* sclConfig= */ "",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -923,6 +1005,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             /* sclConfig= */ "",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -958,6 +1041,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             /* sclConfig= */ "",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
@@ -990,19 +1074,49 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             /* sclConfig= */ "",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
     FlagSetValue flagSetsValue = executeFunction(key);
 
-    assertThat(
-            flagSetsValue
-                .getTopLevelBuildOptions()
-                .getStarlarkOptions()
-                .get(Label.parseCanonical("//test:myflag")))
-        .isEqualTo("test_config_value");
+    assertThat(flagSetsValue.getOptionsFromFlagset())
+        .containsExactly("--//test:myflag=test_config_value");
+    assertContainsPersistentMessage(
+        flagSetsValue,
+        EventKind.INFO,
+        /* frequency= */ 1,
+        "Applying flags from the config 'test_config'");
+  }
 
-    assertContainsEvent("Applying flags from the config 'test_config'");
-    // TODO: b/380581463 - Reenable the frequency check once the initial event is deduplicated.
-    // assertContainsEventWithFrequency("Applying flags from the config 'test_config'", 1);
+  @Test
+  public void nonBuildOptions_areIgnored() throws Exception {
+    createStringFlag("//test:myflag", /* defaultValue= */ "default");
+    scratch.file(
+        "test/PROJECT.scl",
+        """
+        project = {
+          "configs": {
+            "test_config": ['--bazelrc=foo'],
+          },
+          "default_config": "test_config",
+        }
+        """);
+    BuildOptions buildOptions =
+        BuildOptions.getDefaultBuildOptionsForFragments(
+            ruleClassProvider.getFragmentRegistry().getOptionsClasses());
+    setBuildLanguageOptions("--experimental_enable_scl_dialect=true");
+
+    FlagSetValue.Key key =
+        FlagSetValue.Key.create(
+            Label.parseCanonical("//test:PROJECT.scl"),
+            /* sclConfig= */ "",
+            buildOptions,
+            /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
+            /* enforceCanonical= */ true);
+    FlagSetValue flagSetsValue = executeFunction(key);
+
+    assertThat(flagSetsValue.getOptionsFromFlagset()).isEmpty();
+    assertDoesNotContainEvent("Applying flags from the config 'test_config'");
   }
 
   @Test
@@ -1029,16 +1143,17 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             /* sclConfig= */ "",
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
     FlagSetValue flagSetsValue = executeFunction(key);
 
-    assertThat(
-            flagSetsValue
-                .getTopLevelBuildOptions()
-                .getStarlarkOptions()
-                .get(Label.parseCanonical("//test:myflag")))
-        .isEqualTo("test_config_value");
-    assertContainsEvent("Applying flags from the config 'test_config'");
+    assertThat(flagSetsValue.getOptionsFromFlagset())
+        .containsExactly("--//test:myflag=test_config_value");
+    assertContainsPersistentMessage(
+        flagSetsValue,
+        EventKind.INFO,
+        /* frequency= */ 1,
+        "Applying flags from the config 'test_config'");
   }
 
   @Test
@@ -1065,6 +1180,7 @@ string_flag = rule(implementation = lambda ctx: [], build_setting = config.strin
             /* sclConfig= */ null,
             buildOptions,
             /* userOptions= */ ImmutableMap.of(),
+            /* configFlagDefinitions= */ ConfigFlagDefinitions.NONE,
             /* enforceCanonical= */ true);
 
     var thrown = assertThrows(Exception.class, () -> executeFunction(key));
