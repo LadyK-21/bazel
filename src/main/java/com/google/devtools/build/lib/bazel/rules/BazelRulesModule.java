@@ -41,8 +41,16 @@ public final class BazelRulesModule extends BlazeModule {
    * This is where deprecated options used by both Bazel and Blaze but only needed for the build
    * command go to die.
    */
-  @SuppressWarnings("deprecation") // These fields have no JavaDoc by design
   public static class BuildGraveyardOptions extends OptionsBase {
+
+    @Option(
+        name = "j2objc_dead_code_removal",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "Deprecated. No-op.")
+    public boolean removeDeadCode;
+
     @Option(
         name = "experimental_proto_extra_actions",
         defaultValue = "false",
@@ -296,7 +304,6 @@ public final class BazelRulesModule extends BlazeModule {
   }
 
   /** This is where deprecated Bazel-specific options only used by the build command go to die. */
-  @SuppressWarnings("deprecation") // These fields have no JavaDoc by design
   public static final class BazelBuildGraveyardOptions extends BuildGraveyardOptions {
     @Option(
         name = "incompatible_load_python_rules_from_bzl",
@@ -452,6 +459,15 @@ public final class BazelRulesModule extends BlazeModule {
     public String autoCpuEnvironmentGroup;
 
     @Option(
+        name = "incompatible_top_level_aspects_require_providers",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
+        metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op")
+    public boolean incompatibleTopLevelAspectsRequireProviders;
+
+    @Option(
         name = "separate_aspect_deps",
         defaultValue = "true",
         documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
@@ -540,6 +556,23 @@ public final class BazelRulesModule extends BlazeModule {
     public boolean incompatibleUsePlusInRepoNames;
 
     @Option(
+        name = "enable_bzlmod",
+        oldName = "experimental_enable_bzlmod",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
+        effectTags = OptionEffectTag.LOADING_AND_ANALYSIS,
+        help = "No-op.")
+    public boolean enableBzlmod;
+
+    @Option(
+        name = "enable_workspace",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
+        effectTags = OptionEffectTag.LOADING_AND_ANALYSIS,
+        help = "No-op.")
+    public boolean enableWorkspace;
+
+    @Option(
         name = "experimental_announce_profile_path",
         defaultValue = "false",
         documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
@@ -554,6 +587,23 @@ public final class BazelRulesModule extends BlazeModule {
         effectTags = {OptionEffectTag.NO_OP},
         help = "No-op.")
     public boolean incompatibleExistingRulesImmutableView;
+
+    // Safe to delete after July 2025
+    @Option(
+        name = "incompatible_no_package_distribs",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public boolean incompatibleNoPackageDistribs;
+
+    @Option(
+        name = "experimental_action_resource_set",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public boolean experimentalActionResourceSet;
   }
 
   @Override

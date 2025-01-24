@@ -66,7 +66,6 @@ public final class BazelPackageLoaderTest extends AbstractPackageLoaderTest {
     Path tools = embeddedBinaries.getRelative("embedded_tools");
     tools.getRelative("tools/cpp").createDirectoryAndParents();
     tools.getRelative("tools/osx").createDirectoryAndParents();
-    FileSystemUtils.writeIsoLatin1(tools.getRelative("WORKSPACE"), "");
     FileSystemUtils.writeIsoLatin1(tools.getRelative("MODULE.bazel"), "module(name='bazel_tools')");
     FileSystemUtils.writeIsoLatin1(tools.getRelative("tools/cpp/BUILD"), "");
     FileSystemUtils.writeIsoLatin1(
@@ -79,10 +78,6 @@ public final class BazelPackageLoaderTest extends AbstractPackageLoaderTest {
         "def xcode_configure(*args, **kwargs):",
         "    pass");
     FileSystemUtils.writeIsoLatin1(tools.getRelative("tools/sh/BUILD"), "");
-    FileSystemUtils.writeIsoLatin1(
-        tools.getRelative("tools/sh/sh_configure.bzl"),
-        "def sh_configure(*args, **kwargs):",
-        "    pass");
     FileSystemUtils.writeIsoLatin1(tools.getRelative("tools/build_defs/repo/BUILD"));
     FileSystemUtils.writeIsoLatin1(
         tools.getRelative("tools/build_defs/repo/http.bzl"),

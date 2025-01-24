@@ -69,12 +69,11 @@ import com.google.devtools.build.lib.actions.InputMetadataProvider;
 import com.google.devtools.build.lib.actions.LostInputsActionExecutionException;
 import com.google.devtools.build.lib.actions.NotifyOnActionCacheHit;
 import com.google.devtools.build.lib.actions.NotifyOnActionCacheHit.ActionCachedContext;
+import com.google.devtools.build.lib.actions.OutputChecker;
 import com.google.devtools.build.lib.actions.PackageRootResolver;
-import com.google.devtools.build.lib.actions.RemoteArtifactChecker;
 import com.google.devtools.build.lib.actions.ScanningActionEvent;
 import com.google.devtools.build.lib.actions.SpawnActionExecutionException;
 import com.google.devtools.build.lib.actions.SpawnResult;
-import com.google.devtools.build.lib.actions.SpawnResult.MetadataLog;
 import com.google.devtools.build.lib.actions.StoppedScanningActionEvent;
 import com.google.devtools.build.lib.actions.ThreadStateReceiver;
 import com.google.devtools.build.lib.actions.UserExecException;
@@ -688,7 +687,7 @@ public final class SkyframeActionExecutor {
     RemoteOptions remoteOptions;
     SortedMap<String, String> remoteDefaultProperties;
     EventHandler handler;
-    RemoteArtifactChecker remoteArtifactChecker = null;
+    OutputChecker outputChecker = null;
 
     if (cacheHitSemaphore != null) {
       try (SilentCloseable c = profiler.profile(ProfilerTask.ACTION_CHECK, "acquiring semaphore")) {
@@ -701,7 +700,7 @@ public final class SkyframeActionExecutor {
           remoteOptions != null
               ? remoteOptions.getRemoteDefaultExecProperties()
               : ImmutableSortedMap.of();
-      remoteArtifactChecker = outputService.getRemoteArtifactChecker();
+      outputChecker = outputService.getOutputChecker();
       handler =
           options.getOptions(BuildRequestOptions.class).explanationPath != null ? reporter : null;
       token =
@@ -715,7 +714,7 @@ public final class SkyframeActionExecutor {
               outputMetadataStore,
               artifactExpander,
               remoteDefaultProperties,
-              remoteArtifactChecker);
+              outputChecker);
 
       if (token == null) {
         boolean eventPosted = false;
@@ -757,7 +756,7 @@ public final class SkyframeActionExecutor {
                     outputMetadataStore,
                     artifactExpander,
                     remoteDefaultProperties,
-                    remoteArtifactChecker);
+                    outputChecker);
           }
         }
 
@@ -1837,14 +1836,9 @@ public final class SkyframeActionExecutor {
     // Collect MetadataLogs and spawn start times/end times from the Action's SpawnResults.
     ImmutableList<SpawnResult> spawnResults =
         findSpawnResultsInActionResultAndException(actionResult, exception);
-    ImmutableList.Builder<MetadataLog> logs = ImmutableList.builder();
     Instant firstStartTime = Instant.MAX;
     Instant lastEndTime = Instant.MIN;
     for (SpawnResult spawnResult : spawnResults) {
-      MetadataLog log = spawnResult.getActionMetadataLog();
-      if (log != null) {
-        logs.add(log);
-      }
       // Not all SpawnResults have a start time, and some use Instant.MIN/MAX instead of null.
       @Nullable Instant startTime = spawnResult.getStartTime();
       if (startTime != null && !startTime.equals(Instant.MIN) && !startTime.equals(Instant.MAX)) {
@@ -1863,7 +1857,6 @@ public final class SkyframeActionExecutor {
             primaryOutputMetadata,
             stdout,
             stderr,
-            logs.build(),
             errorTiming,
             firstStartTime.equals(Instant.MAX) ? null : firstStartTime,
             lastEndTime.equals(Instant.MIN) ? null : firstStartTime));

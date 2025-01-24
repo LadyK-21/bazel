@@ -79,7 +79,7 @@ class StartupOptions;
 
 class SignalHandler {
  public:
-  typedef void (* Callback)();
+  typedef void (*Callback)();
 
   static SignalHandler& Get() { return INSTANCE; }
   const ServerProcessInfo* GetServerProcessInfo() const {
@@ -106,7 +106,7 @@ class SignalHandler {
 };
 
 // A signal-safe version of fprintf(stderr, ...).
-void SigPrintf(const char *format, ...);
+void SigPrintf(const char* format, ...);
 
 std::string GetProcessIdAsString();
 
@@ -154,12 +154,12 @@ std::string GetJavaBinaryUnderJavabase();
 // Start the Bazel server's JVM in the current directory.
 //
 // Note on Windows: 'server_jvm_args' is NOT expected to be escaped for
-// CreateProcessW.
+// CreateProcessW, and 'run_in_user_cgroup' is ignored.
 //
 // This function does not return on success.
 ATTRIBUTE_NORETURN void ExecuteServerJvm(
     const blaze_util::Path& exe,
-    const std::vector<std::string>& server_jvm_args);
+    const std::vector<std::string>& server_jvm_args, bool run_in_user_cgroup);
 
 // Execute the "bazel run" request in the current directory.
 //
@@ -176,7 +176,6 @@ class BlazeServerStartup {
   virtual ~BlazeServerStartup() {}
   virtual bool IsStillAlive() = 0;
 };
-
 
 // Starts a daemon process with its standard output and standard error
 // redirected (and conditionally appended) to the file "daemon_output". Sets
