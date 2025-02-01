@@ -25,7 +25,6 @@ import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.PathStrippable;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
-import com.google.protobuf.ByteString;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -173,7 +172,7 @@ public abstract sealed class CommandLines {
   public void addToFingerprint(
       ActionKeyContext actionKeyContext,
       @Nullable ArtifactExpander artifactExpander,
-      CoreOptions.OutputPathsMode outputPathsMode,
+      CoreOptions.OutputPathsMode effectiveOutputPathsMode,
       Fingerprint fingerprint)
       throws CommandLineExpansionException, InterruptedException {
     ImmutableList<CommandLineAndParamFileInfo> commandLines = unpack();
@@ -181,7 +180,7 @@ public abstract sealed class CommandLines {
       CommandLine commandLine = pair.commandLine;
       ParamFileInfo paramFileInfo = pair.paramFileInfo;
       commandLine.addToFingerprint(
-          actionKeyContext, artifactExpander, outputPathsMode, fingerprint);
+          actionKeyContext, artifactExpander, effectiveOutputPathsMode, fingerprint);
       if (paramFileInfo != null) {
         addParamFileInfoToFingerprint(paramFileInfo, fingerprint);
       }
@@ -237,13 +236,6 @@ public abstract sealed class CommandLines {
     public byte[] atomicallyWriteTo(Path outputPath) throws IOException {
       // This is needed for internal path wrangling reasons :(
       return super.atomicallyWriteTo(outputPath);
-    }
-
-    @Override
-    public ByteString getBytes() throws IOException {
-      ByteString.Output out = ByteString.newOutput();
-      writeTo(out);
-      return out.toByteString();
     }
 
     @Override

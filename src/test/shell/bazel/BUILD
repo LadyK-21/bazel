@@ -7,7 +7,6 @@ package(default_visibility = ["//visibility:private"])
 filegroup(
     name = "srcs",
     srcs = glob(["**"]) + [
-        "//src/test/shell/bazel/android:srcs",
         "//src/test/shell/bazel/apple:srcs",
         "//src/test/shell/bazel/remote:srcs",
         "//src/test/shell/bazel/testdata:srcs",
@@ -343,18 +342,6 @@ JAVA_VERSIONS_COVERAGE = ("11", "17", "21")
     )
     for java_version in JAVA_VERSIONS
 ]
-
-sh_test(
-    name = "bazel_android_tools_test",
-    size = "small",
-    srcs = ["bazel_android_tools_test.sh"],
-    data = [
-        ":test-deps",
-        "//tools/android/runtime_deps:android_tools.tar",
-        "@bazel_tools//tools/bash/runfiles",
-    ],
-    tags = ["no_windows"],
-)
 
 sh_test(
     name = "bazel_java_tools_test",
@@ -859,14 +846,6 @@ sh_test(
 )
 
 sh_test(
-    name = "cross_repository_test",
-    size = "large",
-    srcs = ["cross_repository_test.sh"],
-    data = [":test-deps"],
-    tags = ["no_windows"],
-)
-
-sh_test(
     name = "external_starlark_load_test",
     size = "large",
     srcs = ["external_starlark_load_test.sh"],
@@ -986,35 +965,11 @@ sh_test(
 )
 
 sh_test(
-    name = "workspace_test",
-    size = "large",
-    srcs = ["workspace_test.sh"],
-    data = [":test-deps"],
-    shard_count = 5,
-    tags = ["no_windows"],
-)
-
-sh_test(
     name = "bazelignore_test",
     size = "medium",
     srcs = ["bazelignore_test.sh"],
     data = [":test-deps"],
     tags = ["no_windows"],
-)
-
-sh_test(
-    name = "workspace_resolved_test",
-    size = "large",
-    srcs = ["workspace_resolved_test.sh"],
-    data = [
-        ":test-deps",
-        "@bazel_tools//tools/bash/runfiles",
-    ],
-    shard_count = 22,
-    tags = [
-        "no_windows",
-        "requires-network",  # rules_python are needed and are hard to mock out
-    ],
 )
 
 sh_test(
@@ -1304,20 +1259,6 @@ test_suite(
 )
 
 sh_test(
-    name = "bazel_workspaces_test",
-    srcs = ["bazel_workspaces_test.sh"],
-    data = [
-        ":test-deps",
-        "//src/tools/workspacelog:parser",
-    ],
-    shard_count = 3,
-    tags = [
-        "no_windows",
-        "requires-network",
-    ],
-)
-
-sh_test(
     name = "jdeps_test",
     size = "large",
     srcs = ["jdeps_test.sh"],
@@ -1392,6 +1333,7 @@ sh_test(
     data = [
         ":test-deps",
         "//src/tools/remote:worker",
+        "@local_jdk//:jdk",  # for remote_helpers
     ],
     tags = [
         "no_windows",

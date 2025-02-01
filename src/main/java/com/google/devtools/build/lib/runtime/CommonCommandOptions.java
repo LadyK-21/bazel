@@ -108,7 +108,7 @@ public class CommonCommandOptions extends OptionsBase {
 
   @Option(
       name = "experimental_install_base_gc_max_age",
-      defaultValue = "0",
+      defaultValue = "30d",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.HOST_MACHINE_RESOURCE_OPTIMIZATIONS},
       converter = DurationConverter.class,
@@ -296,8 +296,9 @@ public class CommonCommandOptions extends OptionsBase {
       effectTags = {OptionEffectTag.BAZEL_MONITORING},
       converter = OptionsUtils.PathFragmentConverter.class,
       help =
-          "If set, profile Bazel and write data to the specified "
-              + "file. Use bazel analyze-profile to analyze the profile.")
+          "If set, profile Bazel and write data to the specified file. See"
+              + " https://bazel.build/advanced/performance/json-trace-profile for more"
+              + " information.")
   public PathFragment profilePath;
 
   @Option(
@@ -470,17 +471,6 @@ public class CommonCommandOptions extends OptionsBase {
       metadataTags = {OptionMetadataTag.EXPERIMENTAL, OptionMetadataTag.HIDDEN},
       help = "Enable processing of +<file> parameters.")
   public boolean allowProjectFiles;
-
-  @Option(
-      name = "block_for_lock",
-      defaultValue = "true",
-      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-      effectTags = {OptionEffectTag.BAZEL_INTERNAL_CONFIGURATION},
-      metadataTags = {OptionMetadataTag.HIDDEN},
-      help =
-          "If set (the default), a command will block if there is another one running. If "
-              + "unset, these commands will immediately return with an error.")
-  public boolean blockForLock;
 
   // We could accept multiple of these, in the event where there's a chain of tools that led to a
   // Bazel invocation. We would not want to expect anything from the order of these, and would need

@@ -31,6 +31,9 @@ import com.google.devtools.build.lib.bazel.repository.RepositoryOptions.Lockfile
 import com.google.devtools.build.lib.bazel.repository.downloader.DownloadManager;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
 import com.google.devtools.build.lib.events.Event;
+import com.google.devtools.build.lib.profiler.Profiler;
+import com.google.devtools.build.lib.profiler.ProfilerTask;
+import com.google.devtools.build.lib.profiler.SilentCloseable;
 import com.google.devtools.build.lib.rules.repository.NeedsSkyframeRestartException;
 import com.google.devtools.build.lib.rules.repository.RepoRecordedInput;
 import com.google.devtools.build.lib.runtime.ProcessWrapper;
@@ -148,7 +151,9 @@ public class SingleExtensionEvalFunction implements SkyFunction {
       lockedExtension =
           lockedExtensionMap == null ? null : lockedExtensionMap.get(extension.getEvalFactors());
       if (lockedExtension != null) {
-        try {
+        try (SilentCloseable c =
+            Profiler.instance()
+                .profile(ProfilerTask.BZLMOD, () -> "check lockfile for " + extensionId)) {
           SingleExtensionValue singleExtensionValue =
               tryGettingValueFromLockFile(
                   env,
@@ -425,11 +430,12 @@ public class SingleExtensionEvalFunction implements SkyFunction {
       BlazeDirectories directories,
       Map<? extends RepoRecordedInput, String> recordedInputs)
       throws InterruptedException, NeedsSkyframeRestartException {
-    boolean upToDate = RepoRecordedInput.areAllValuesUpToDate(env, directories, recordedInputs);
+    Optional<String> outdated =
+        RepoRecordedInput.isAnyValueOutdated(env, directories, recordedInputs);
     if (env.valuesMissing()) {
       throw new NeedsSkyframeRestartException();
     }
-    return !upToDate;
+    return outdated.isPresent();
   }
 
   /**
@@ -459,8 +465,7 @@ public class SingleExtensionEvalFunction implements SkyFunction {
                 .get()
                 .generateFixup(
                     usagesValue.getExtensionUsages().get(ModuleKey.ROOT),
-                    generatedRepoSpecs.keySet(),
-                    env.getListener());
+                    generatedRepoSpecs.keySet());
       } catch (EvalException e) {
         env.getListener().handle(Event.error(e.getInnermostLocation(), e.getMessageWithStack()));
         throw new SingleExtensionEvalFunctionException(

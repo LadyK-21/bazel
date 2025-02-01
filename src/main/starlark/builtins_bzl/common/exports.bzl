@@ -37,7 +37,6 @@ load(":common/cc/fdo/fdo_profile.bzl", "fdo_profile")
 load(":common/cc/fdo/memprof_profile.bzl", "memprof_profile")
 load(":common/cc/fdo/propeller_optimize.bzl", "propeller_optimize")
 load(":common/objc/apple_common.bzl", "apple_common")
-load(":common/objc/objc_common.bzl", "objc_common")
 
 exported_toplevels = {
     # This dummy symbol is not part of the public API; it is only used to test
@@ -48,6 +47,10 @@ exported_toplevels = {
     "CcSharedLibraryHintInfo": CcSharedLibraryHintInfo,
     "cc_common": cc_common,
     "apple_common": apple_common,
+    "proto_common_do_not_use": struct(
+        INCOMPATIBLE_ENABLE_PROTO_TOOLCHAIN_RESOLUTION =
+            _builtins.toplevel.proto_common_do_not_use.incompatible_enable_proto_toolchain_resolution(),
+    ),
 }
 
 # A list of Starlarkified native rules.
@@ -79,8 +82,6 @@ exported_rules = {
 
 # A list of Starlark functions callable from native rules implementation.
 exported_to_java = {
-    "j2objc_mapping_file_info_union": objc_common.j2objc_mapping_file_info_union,
-    "j2objc_entry_class_info_union": objc_common.j2objc_entry_class_info_union,
     "init_cc_compilation_context": cc_compilation_helper.init_cc_compilation_context,
     "get_toolchain_global_make_variables": cc_helper.get_toolchain_global_make_variables,
 }

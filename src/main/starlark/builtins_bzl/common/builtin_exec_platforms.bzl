@@ -317,7 +317,6 @@ bazel_fragments["CppOptions"] = fragment(
         "//command_line_option:strict_system_includes",
         "//command_line_option:experimental_use_cpp_compile_action_args_params_file",
         "//command_line_option:experimental_unsupported_and_brittle_include_scanning",
-        "//command_line_option:incompatible_enable_cc_test_feature",
         "//command_line_option:incompatible_use_cpp_compile_header_mnemonic",
         "//command_line_option:experimental_starlark_cc_import",
         "//command_line_option:incompatible_macos_set_install_name",
@@ -356,15 +355,6 @@ bazel_fragments["CppOptions"] = fragment(
 bazel_fragments["GenQueryConfiguration$GenQueryOptions"] = fragment(
     propagate = [
         "//command_line_option:experimental_skip_ttvs_for_genquery",
-    ],
-)
-
-bazel_fragments["J2ObjcCommandLineOptions"] = fragment(
-    propagate = [
-        "//command_line_option:j2objc_translation_flags",
-        "//command_line_option:incompatible_j2objc_library_migration",
-        "//command_line_option:experimental_j2objc_header_map",
-        "//command_line_option:experimental_j2objc_shorter_header_path",
     ],
 )
 
@@ -431,6 +421,7 @@ bazel_fragments["JavaOptions"] = fragment(
 bazel_fragments["ObjcCommandLineOptions"] = fragment(
     propagate = [
         "//command_line_option:incompatible_avoid_hardcoded_objc_compilation_flags",
+        "//command_line_option:incompatible_builtin_objc_strip_action",
         "//command_line_option:incompatible_disallow_sdk_frameworks_attributes",
         "//command_line_option:incompatible_objc_alwayslink_by_default",
         "//command_line_option:incompatible_strip_executable_safely",

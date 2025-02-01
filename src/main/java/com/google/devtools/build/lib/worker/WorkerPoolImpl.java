@@ -37,8 +37,6 @@ import javax.annotation.Nullable;
 /**
  * Implementation of the WorkerPool.
  *
- * <p>TODO(b/323880131): Remove documentation once we completely remove the legacy implementation.
- *
  * <p>This implementation flattens this to have a single {@code WorkerKeyPool} for each worker key
  * (we don't need the indirection in referencing both mnemonic and worker key since the mnemonic is
  * part of the key). Additionally, it bakes in pool shrinking logic so that we can handle concurrent
@@ -58,14 +56,18 @@ public class WorkerPoolImpl implements WorkerPool {
 
   private final ImmutableMap<String, Integer> singleplexMaxInstances;
   private final ImmutableMap<String, Integer> multiplexMaxInstances;
+
+  private final WorkerOptions options;
+
   private final ConcurrentHashMap<WorkerKey, WorkerKeyPool> pools = new ConcurrentHashMap<>();
 
-  public WorkerPoolImpl(WorkerFactory factory, WorkerPoolConfig config) {
+  public WorkerPoolImpl(WorkerFactory factory, WorkerPoolConfig config, WorkerOptions options) {
     this.factory = factory;
     this.singleplexMaxInstances =
         getMaxInstances(config.getWorkerMaxInstances(), DEFAULT_MAX_SINGLEPLEX_WORKERS);
     this.multiplexMaxInstances =
         getMaxInstances(config.getWorkerMaxMultiplexInstances(), DEFAULT_MAX_MULTIPLEX_WORKERS);
+    this.options = options;
   }
 
   private static ImmutableMap<String, Integer> getMaxInstances(
@@ -116,27 +118,18 @@ public class WorkerPoolImpl implements WorkerPool {
   }
 
   @Override
-  public Worker borrowObject(WorkerKey key) throws IOException, InterruptedException {
+  public Worker borrowWorker(WorkerKey key) throws IOException, InterruptedException {
     return getPool(key).borrowWorker(key);
   }
 
   @Override
-  public void returnObject(WorkerKey key, Worker obj) {
+  public void returnWorker(WorkerKey key, Worker obj) {
     getPool(key).returnWorker(key, /* worker= */ obj);
   }
 
   @Override
-  public void invalidateObject(WorkerKey key, Worker obj) throws InterruptedException {
-    invalidateWorker(
-        /* worker= */ obj, /* shouldShrinkPool= */ obj.getStatus().isPendingEviction());
-  }
-
-  /**
-   * TODO(b/323880131): This should be the main interface once the we remove the legacy worker pool
-   * implementation.
-   */
-  private void invalidateWorker(Worker worker, boolean shouldShrinkPool) {
-    getPool(worker.getWorkerKey()).invalidateWorker(worker, shouldShrinkPool);
+  public void invalidateWorker(Worker worker) throws InterruptedException {
+    getPool(worker.getWorkerKey()).invalidateWorker(worker, worker.getStatus().isPendingEviction());
   }
 
   @Override
@@ -249,10 +242,11 @@ public class WorkerPoolImpl implements WorkerPool {
               worker.getWorkerKey().getMnemonic(),
               worker.getWorkerId(),
               worker.getWorkerKey().hashCode());
+        } else if (options.shrinkWorkerPool) {
+          String msg = String.format("Postponing eviction of worker id: %s", worker.getWorkerId());
+          logger.atInfo().log("%s", msg);
+          worker.getStatus().maybeUpdateStatus(Status.PENDING_KILL_DUE_TO_MEMORY_PRESSURE);
         }
-        // TODO(b/323880131): Move postponing of invalidation from {@code WorkerLifecycleManager}
-        // here, since all we need to do is to update the statuses. We keep it like this for now
-        // to preserve the existing behavior.
       }
       return evictedWorkerIds;
     }
