@@ -48,6 +48,7 @@ public record ModuleExtensionId(
    * @param module The module which contains this isolated usage of a module extension.
    * @param usageExportedName The exported name of the first extension proxy for this usage.
    */
+  @AutoCodec
   record IsolationKey(ModuleKey module, String usageExportedName) {
     IsolationKey {
       requireNonNull(module, "module");
@@ -80,7 +81,7 @@ public record ModuleExtensionId(
   }
 
   public boolean isInnate() {
-    return extensionName().contains("%");
+    return extensionName().contains(" ");
   }
 
   @Override

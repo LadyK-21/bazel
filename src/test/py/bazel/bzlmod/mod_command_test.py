@@ -42,7 +42,6 @@ class ModCommandTest(test_base.TestBase):
         [
             # In ipv6 only network, this has to be enabled.
             # 'startup --host_jvm_args=-Djava.net.preferIPv6Addresses=true',
-            'mod --noenable_workspace',
             'mod --registry=' + self.main_registry.getURL(),
             # We need to have BCR here to make sure built-in modules like
             # bazel_tools can work.
@@ -139,16 +138,6 @@ class ModCommandTest(test_base.TestBase):
   def tearDown(self):
     self.main_registry.stop()
     test_base.TestBase.tearDown(self)
-
-  def testFailWithoutBzlmod(self):
-    _, _, stderr = self.RunBazel(
-        ['mod', 'graph', '--noenable_bzlmod'], allow_failure=True
-    )
-    self.assertIn(
-        'ERROR: Bzlmod has to be enabled for mod command to work, run with '
-        "--enable_bzlmod. Type 'bazel help mod' for syntax and help.",
-        stderr,
-    )
 
   def testGraph(self):
     _, stdout, _ = self.RunBazel(['mod', 'graph'], rstrip=True)
@@ -466,14 +455,16 @@ class ModCommandTest(test_base.TestBase):
     self.assertRegex(stdout.pop(4), r'^  urls = \[".*"\],$')
     self.assertRegex(stdout.pop(4), r'^  integrity = ".*",$')
     self.assertRegex(stdout.pop(19), r'^  path = ".*",$')
-    # lines after 'Rule data_repo defined at (most recent call last):'
-    stdout.pop(32)
-    stdout.pop(42)
-    self.assertRegex(stdout.pop(47), r'^  urls = \[".*"\],$')
-    self.assertRegex(stdout.pop(47), r'^  integrity = ".*",$')
+    # lines after '# Rule local_repository defined at (most recent call last):'
+    stdout.pop(23)
+    # lines after '# Rule data_repo defined at (most recent call last):'
+    stdout.pop(33)
+    stdout.pop(43)
+    self.assertRegex(stdout.pop(48), r'^  urls = \[".*"\],$')
+    self.assertRegex(stdout.pop(48), r'^  integrity = ".*",$')
     # lines after '# Rule http_archive defined at (most recent call last):'
     stdout.pop(13)
-    stdout.pop(55)
+    stdout.pop(56)
     self.assertListEqual(
         stdout,
         [
@@ -502,6 +493,8 @@ class ModCommandTest(test_base.TestBase):
             ')',
             '# Rule ext+ instantiated at (most recent call last):',
             '#   <builtin> in <toplevel>',
+            '# Rule local_repository defined at (most recent call last):',
+            # pop(23)
             '',
             '## @my_repo3:',
             '# <builtin>',
@@ -512,7 +505,7 @@ class ModCommandTest(test_base.TestBase):
             '# Rule ext++ext+repo3 instantiated at (most recent call last):',
             '#   <builtin> in <toplevel>',
             '# Rule data_repo defined at (most recent call last):',
-            # pop(32)
+            # pop(33)
             '',
             '## @my_repo4:',
             '# <builtin>',
@@ -523,14 +516,14 @@ class ModCommandTest(test_base.TestBase):
             '# Rule ext++ext+repo4 instantiated at (most recent call last):',
             '#   <builtin> in <toplevel>',
             '# Rule data_repo defined at (most recent call last):',
-            # pop(42)
+            # pop(43)
             '',
             '## bar@2.0:',
             '# <builtin>',
             'http_archive(',
             '  name = "bar+",',
-            # pop(47) -- urls=[...]
-            # pop(47) -- integrity=...
+            # pop(48) -- urls=[...]
+            # pop(48) -- integrity=...
             '  strip_prefix = "",',
             '  remote_file_urls = {},',
             '  remote_file_integrity = {},',
@@ -540,7 +533,7 @@ class ModCommandTest(test_base.TestBase):
             '# Rule bar+ instantiated at (most recent call last):',
             '#   <builtin> in <toplevel>',
             '# Rule http_archive defined at (most recent call last):',
-            # pop(55)
+            # pop(56)
             '',
         ],
         'wrong output in the show query for module and extension-generated'
@@ -735,13 +728,13 @@ class ModCommandTest(test_base.TestBase):
     # The extensions should not be reevaluated by the command.
     self.assertNotIn('ext1 is being evaluated', stderr)
     self.assertNotIn('ext2 is being evaluated', stderr)
-    # The fixup warnings should be shown again due to Skyframe replaying.
-    self.assertIn(
+    # bazel mod tidy doesn't show fixup warnings.
+    self.assertNotIn(
         'Not imported, but reported as direct dependencies by the extension'
         ' (may cause the build to fail):\nmissing_dep',
         stderr,
     )
-    self.assertIn(
+    self.assertNotIn(
         'Imported, but reported as indirect dependencies by the'
         ' extension:\nindirect_dep',
         stderr,
@@ -1085,13 +1078,13 @@ class ModCommandTest(test_base.TestBase):
     # The passing extension should not be reevaluated by the command.
     self.assertNotIn('ext1 is being evaluated', stderr)
     self.assertIn('ext2 is being evaluated', stderr)
-    # The fixup warnings should be shown again due to Skyframe replaying.
-    self.assertIn(
+    # baze mod tidy doesn't show fixup warnings.
+    self.assertNotIn(
         'Not imported, but reported as direct dependencies by the extension'
         ' (may cause the build to fail):\nmissing_dep',
         stderr,
     )
-    self.assertIn(
+    self.assertNotIn(
         'Imported, but reported as indirect dependencies by the'
         ' extension:\nindirect_dep',
         stderr,
@@ -1178,10 +1171,6 @@ class ModCommandTest(test_base.TestBase):
     # extension fails after evaluation.
     _, _, stderr = self.RunBazel(['mod', 'tidy'])
     stderr = '\n'.join(stderr)
-    self.assertIn(
-        'ext defined in @//:extension.bzl reported incorrect imports', stderr
-    )
-    self.assertIn('invalid_dep', stderr)
     self.assertIn(
         'INFO: Updated use_repo calls for @//:extension.bzl%ext', stderr
     )

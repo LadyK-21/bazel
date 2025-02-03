@@ -15,11 +15,7 @@
 package net.starlark.java.eval;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
 import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -656,38 +652,39 @@ final class Eval {
 
     // StarStar and Star args are guaranteed to be last, if they occur.
     ImmutableList<Argument> arguments = call.getArguments();
-    int n = arguments.size();
+    int numNonStarArgs = arguments.size();
     Argument.StarStar starstar = null;
-    if (n > 0 && arguments.get(n - 1) instanceof Argument.StarStar) {
-      starstar = (Argument.StarStar) arguments.get(n - 1);
-      n--;
+    if (numNonStarArgs > 0 && arguments.get(numNonStarArgs - 1) instanceof Argument.StarStar) {
+      starstar = (Argument.StarStar) arguments.get(numNonStarArgs - 1);
+      numNonStarArgs--;
     }
     Argument.Star star = null;
-    if (n > 0 && arguments.get(n - 1) instanceof Argument.Star) {
-      star = (Argument.Star) arguments.get(n - 1);
-      n--;
+    if (numNonStarArgs > 0 && arguments.get(numNonStarArgs - 1) instanceof Argument.Star) {
+      star = (Argument.Star) arguments.get(numNonStarArgs - 1);
+      numNonStarArgs--;
     }
-    // Inv: n = |positional| + |named|
+    // Inv: numNonStarArgs = |positional| + |named|
 
-    // Allocate assuming no *args/**kwargs.
-    int npos = call.getNumPositionalArguments();
-    int i;
+    StarlarkCallable.ArgumentProcessor argumentProcessor =
+        Starlark.requestArgumentProcessor(fr.thread, fn);
+
+    int numPositionalArguments = call.getNumPositionalArguments();
+
+    // Set the location of the call before the first calls to argumentProcessor.add*Arg().
+    Location loc = call.getLparenLocation();
+    fr.setLocation(loc);
 
     // f(expr) -- positional args
-    Object[] positional = npos == 0 ? EMPTY : new Object[npos];
-    for (i = 0; i < npos; i++) {
+    int i;
+    for (i = 0; i < numPositionalArguments; i++) {
       Argument arg = arguments.get(i);
-      Object value = eval(fr, arg.getValue());
-      positional[i] = value;
+      argumentProcessor.addPositionalArg(eval(fr, arg.getValue()));
     }
 
     // f(id=expr) -- named args
-    Object[] named = n == npos ? EMPTY : new Object[2 * (n - npos)];
-    for (int j = 0; i < n; i++) {
-      Argument.Keyword arg = (Argument.Keyword) arguments.get(i);
-      Object value = eval(fr, arg.getValue());
-      named[j++] = arg.getName();
-      named[j++] = value;
+    for (; i < numNonStarArgs; i++) {
+      Argument arg = arguments.get(i);
+      argumentProcessor.addNamedArg(arg.getName(), eval(fr, arg.getValue()));
     }
 
     // f(*args) -- varargs
@@ -697,11 +694,9 @@ final class Eval {
         fr.setErrorLocation(star.getStartLocation());
         throw Starlark.errorf("argument after * must be an iterable, not %s", Starlark.type(value));
       }
-      // TODO(adonovan): opt: if value.size is known, preallocate (and skip if empty).
-      ArrayList<Object> list = new ArrayList<>();
-      Collections.addAll(list, positional);
-      Iterables.addAll(list, iter);
-      positional = list.toArray();
+      for (Object o : iter) {
+        argumentProcessor.addPositionalArg(o);
+      }
     }
 
     // f(**kwargs)
@@ -713,22 +708,21 @@ final class Eval {
         fr.setErrorLocation(starstar.getStartLocation());
         throw Starlark.errorf("argument after ** must be a dict, not %s", Starlark.type(value));
       }
-      int j = named.length;
-      named = Arrays.copyOf(named, j + 2 * kwargs.size());
       for (Map.Entry<?, ?> e : kwargs.entrySet()) {
-        if (!(e.getKey() instanceof String)) {
+        if (!(e.getKey() instanceof String eKey)) {
           fr.setErrorLocation(starstar.getStartLocation());
           throw Starlark.errorf("keywords must be strings, not %s", Starlark.type(e.getKey()));
         }
-        named[j++] = e.getKey();
-        named[j++] = e.getValue();
+        argumentProcessor.addNamedArg(eKey, e.getValue());
       }
     }
 
-    Location loc = call.getLparenLocation(); // (Location is prematerialized)
+    // Set the location of the call again after the argument values were evaluated.
+    // Argument values that contain callable invocations may have changed the location.
     fr.setLocation(loc);
+
     try {
-      return Starlark.fastcall(fr.thread, fn, positional, named);
+      return Starlark.callViaArgumentProcessor(fr.thread, argumentProcessor);
     } catch (EvalException ex) {
       fr.setErrorLocation(loc);
       throw ex;

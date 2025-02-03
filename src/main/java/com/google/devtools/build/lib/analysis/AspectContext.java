@@ -29,6 +29,7 @@ import com.google.devtools.build.lib.packages.Aspect;
 import com.google.devtools.build.lib.packages.AspectDescriptor;
 import com.google.devtools.build.lib.packages.Attribute;
 import com.google.devtools.build.lib.packages.AttributeMap;
+import com.google.devtools.build.lib.packages.ExecGroup;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -94,7 +95,7 @@ public final class AspectContext extends RuleContext {
   public ImmutableSet<Label> getRequestedToolchainTypesLabels() {
     if (targetUsesAutoExecGroups) {
       return baseTargetToolchainContexts.contextMap().entrySet().stream()
-          .filter(e -> isAutomaticExecGroup(e.getKey()))
+          .filter(e -> ExecGroup.isAutomatic(e.getKey()))
           .flatMap(e -> e.getValue().requestedToolchainTypeLabels().keySet().stream())
           .collect(toImmutableSet());
     } else {
@@ -118,7 +119,7 @@ public final class AspectContext extends RuleContext {
           baseTargetToolchainContexts.contextMap().entrySet().stream()
               .filter(
                   e ->
-                      isAutomaticExecGroup(e.getKey())
+                      ExecGroup.isAutomatic(e.getKey())
                           && e.getValue().requestedToolchainTypeLabels().containsKey(toolchainType))
               .findFirst()
               .map(e -> e.getValue())
@@ -128,7 +129,7 @@ public final class AspectContext extends RuleContext {
       }
     }
     return execGroupContext
-        .getToolchains()
+        .toolchains()
         .get(execGroupContext.requestedToolchainTypeLabels().get(toolchainType));
   }
 
@@ -285,5 +286,24 @@ public final class AspectContext extends RuleContext {
             mainAspectPrerequisites.getAllPrerequisites().stream(),
             getRulePrerequisitesCollection().getAllPrerequisites().stream())
         .collect(toImmutableList());
+  }
+
+  private ImmutableList<TemplateVariableInfo> getTemplateVariablesFromBaseRuleToolchains() {
+    if (this.getBaseTargetToolchainContexts() == null) {
+      return ImmutableList.of();
+    }
+
+    return this.getBaseTargetToolchainContexts().contextMap().values().stream()
+        .flatMap(context -> context.templateVariableProviders().stream())
+        .collect(toImmutableList());
+  }
+
+  @Override
+  public ImmutableList<TemplateVariableInfo> getDefaultTemplateVariableProviders() {
+    return new ImmutableList.Builder<TemplateVariableInfo>()
+        .addAll(super.getDefaultTemplateVariableProviders())
+        // Add base rule toolchain data in addition to aspect attribute and toolchain data.
+        .addAll(getTemplateVariablesFromBaseRuleToolchains())
+        .build();
   }
 }

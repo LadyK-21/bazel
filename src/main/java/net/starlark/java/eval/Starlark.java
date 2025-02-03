@@ -300,6 +300,8 @@ public final class Starlark {
     }
   }
 
+  private static final Object[] EMPTY = {};
+
   /**
    * Returns the length of a Starlark string, sequence (such as a list or tuple), dict, or other
    * iterable, as if by the Starlark expression {@code len(x)}, or -1 if the value is valid but has
@@ -766,20 +768,20 @@ public final class Starlark {
   public static Object call(
       StarlarkThread thread, Object fn, List<Object> args, Map<String, Object> kwargs)
       throws EvalException, InterruptedException {
-    Object[] named = new Object[2 * kwargs.size()];
-    int i = 0;
-    for (Map.Entry<String, Object> e : kwargs.entrySet()) {
-      named[i++] = e.getKey();
-      named[i++] = Starlark.checkValid(e.getValue());
+    StarlarkCallable.ArgumentProcessor argumentProcessor = requestArgumentProcessor(thread, fn);
+    for (Object arg : args) {
+      argumentProcessor.addPositionalArg(arg);
     }
-    return fastcall(thread, fn, args.toArray(), named);
+    for (Map.Entry<String, Object> e : kwargs.entrySet()) {
+      argumentProcessor.addNamedArg(e.getKey(), Starlark.checkValid(e.getValue()));
+    }
+    return callViaArgumentProcessor(thread, argumentProcessor);
   }
 
   /**
-   * Calls the function-like value {@code fn} in the specified thread, passing it the given
-   * positional and named arguments in the "fastcall" array representation.
-   *
-   * <p>The caller must not subsequently modify or even inspect the two arrays.
+   * Calls the a function-like value in the specified thread via the given ArgumentProcessor which
+   * previously has been returned by {@link #requestArgumentProcessor} and has been populated with
+   * the arguments.
    *
    * <p>If the call throws an unchecked throwable, regardless of whether it originates in a
    * user-defined built-in function or a bug in the interpreter itself, the throwable is wrapped by
@@ -788,14 +790,12 @@ public final class Starlark {
    * Starlark call stack rather than the Java call stack. The original throwable (and the Java call
    * stack) may be retrieved using {@link Throwable#getCause}.
    */
-  public static Object fastcall(
-      StarlarkThread thread, Object fn, Object[] positional, Object[] named)
+  public static Object callViaArgumentProcessor(
+      StarlarkThread thread, StarlarkCallable.ArgumentProcessor argumentProcessor)
       throws EvalException, InterruptedException {
-    StarlarkCallable callable = getStarlarkCallable(thread, fn);
-
-    thread.push(callable);
+    thread.push(argumentProcessor.getCallable());
     try {
-      return callable.fastcall(thread, positional, named);
+      return argumentProcessor.call(thread);
     } catch (UncheckedEvalException | UncheckedEvalError ex) {
       throw ex; // already wrapped
     } catch (RuntimeException ex) {
@@ -825,10 +825,24 @@ public final class Starlark {
    */
   public static Object positionalOnlyCall(StarlarkThread thread, Object fn, Object... positional)
       throws EvalException, InterruptedException {
-    return fastcall(thread, fn, positional, EMPTY);
-  }
+    StarlarkCallable callable = getStarlarkCallable(thread, fn);
 
-  private static final Object[] EMPTY = {};
+    thread.push(callable);
+    try {
+      return callable.positionalOnlyCall(thread, positional);
+    } catch (UncheckedEvalException | UncheckedEvalError ex) {
+      throw ex; // already wrapped
+    } catch (RuntimeException ex) {
+      throw new UncheckedEvalException(ex, thread);
+    } catch (Error ex) {
+      throw new UncheckedEvalError(ex, thread);
+    } catch (EvalException ex) {
+      // If this exception was newly thrown, set its stack.
+      throw ex.ensureStack(thread);
+    } finally {
+      thread.pop();
+    }
+  }
 
   private static StarlarkCallable getStarlarkCallable(StarlarkThread thread, Object fn)
       throws EvalException {
@@ -845,6 +859,11 @@ public final class Starlark {
       callable = new BuiltinFunction(fn, desc.getName(), desc);
     }
     return callable;
+  }
+
+  public static StarlarkCallable.ArgumentProcessor requestArgumentProcessor(
+      StarlarkThread thread, Object fn) throws EvalException {
+    return getStarlarkCallable(thread, fn).requestArgumentProcessor(thread);
   }
 
   /**

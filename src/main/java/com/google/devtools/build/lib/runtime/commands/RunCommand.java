@@ -270,7 +270,9 @@ public class RunCommand implements BlazeCommand {
         ImmutableList.copyOf(targetAndArgs.subList(1, targetAndArgs.size()));
     RunCommandLine runCommandLine;
     try {
-      runCommandLine = getCommandLineInfo(env, builtTargets, options, argsFromResidue, testPolicy);
+      runCommandLine =
+          getCommandLineInfo(
+              env, builtTargets, options, argsFromResidue, runOptions.runEnvironment, testPolicy);
     } catch (RunCommandException e) {
       return e.result;
     }
@@ -284,10 +286,6 @@ public class RunCommand implements BlazeCommand {
       // In --batch, prioritize original client env-var values over those added by the c++ launcher.
       // Only necessary in --batch since the command runs as a subprocess of the java server.
       finalRunEnv.putAll(env.getClientEnv());
-    }
-
-    for (Map.Entry<String, String> entry : runOptions.runEnvironment) {
-      finalRunEnv.put(entry.getKey(), entry.getValue());
     }
 
     ExecRequest.Builder execRequest;
@@ -371,7 +369,8 @@ public class RunCommand implements BlazeCommand {
                 request,
                 (Collection<Target> tgts, boolean keepGoing) ->
                     validateTargets(
-                        env.getReporter(), request.getTargets(), tgts, runUnder, keepGoing));
+                        env.getReporter(), request.getTargets(), tgts, runUnder, keepGoing),
+                options);
     if (!buildResult.getSuccess()) {
       env.getReporter().handle(Event.error("Build failed. Not running target"));
       throw new RunCommandException(
@@ -549,7 +548,7 @@ public class RunCommand implements BlazeCommand {
 
   private static ImmutableList<PathToReplace> getPathsToReplace(
       CommandEnvironment env, String testLogDir, boolean isTestTarget) {
-    ImmutableList<PathToReplace> pathsToReplace = ExecRequestUtils.getPathsToReplace(env);
+    ImmutableList<PathToReplace> pathsToReplace = PathToReplaceUtils.getPathsToReplace(env);
     if (isTestTarget) {
       return ImmutableList.<PathToReplace>builder()
           .addAll(pathsToReplace)
@@ -639,6 +638,7 @@ public class RunCommand implements BlazeCommand {
       BuiltTargets builtTargets,
       OptionsParsingResult options,
       ImmutableList<String> argsFromResidue,
+      List<Map.Entry<String, String>> extraRunEnvironment,
       TestPolicy testPolicy)
       throws RunCommandException {
     if (builtTargets.targetToRun.getProvider(TestProvider.class) != null) {
@@ -659,6 +659,9 @@ public class RunCommand implements BlazeCommand {
     }
     TreeMap<String, String> runEnvironment = makeMutableRunEnvironment(env);
     actionEnvironment.resolve(runEnvironment, env.getClientEnv());
+    for (var entry : extraRunEnvironment) {
+      runEnvironment.put(entry.getKey(), entry.getValue());
+    }
 
     ImmutableList<String> argsFromBinary;
     try {

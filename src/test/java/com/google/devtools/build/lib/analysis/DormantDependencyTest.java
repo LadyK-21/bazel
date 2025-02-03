@@ -968,4 +968,74 @@ binary = rule(
     // Two deps in two configurations must be four artifacts altogether
     assertThat(filesToBuild.toList()).hasSize(4);
   }
+
+  @Test
+  public void testAspectOnDependencyResolutionRule() throws Exception {
+    scratch.file(
+        "dormant/dormant.bzl",
+        """
+        def _propagator_impl(ctx):
+          return [DefaultInfo(files=depset(ctx.files.dep))]
+
+        def _asp_impl(target, ctx):
+          o = ctx.actions.declare_file("o")
+          ctx.actions.write(o, "CONTENT")
+          return [DefaultInfo(files=depset([o]))]
+
+        def _dep_impl(ctx):
+          return [DefaultInfo()]
+
+        dep = rule(
+          implementation = _dep_impl,
+          dependency_resolution_rule=True,
+          attrs = {})
+
+        asp = aspect(implementation = _asp_impl)
+
+        propagator = rule(
+            implementation = _propagator_impl,
+            attrs = {"dep": attr.label(for_dependency_resolution=True, aspects=[asp])})
+        """);
+
+    scratch.file(
+        "dormant/BUILD",
+        """
+        load(":dormant.bzl", "propagator", "dep")
+        dep(name="dep")
+        propagator(name="propagator", dep=":dep")
+        """);
+
+    update("//dormant:propagator");
+    ConfiguredTarget propagator = getConfiguredTarget("//dormant:propagator");
+    NestedSet<Artifact> filesToBuild = propagator.getProvider(FileProvider.class).getFilesToBuild();
+    assertThat(ActionsTestUtil.baseArtifactNames(filesToBuild)).containsExactly("o");
+  }
+
+  @Test
+  public void testLabelInMaterializer() throws Exception {
+    scratch.file(
+        "dormant/dormant.bzl",
+        """
+        def _binary_impl(ctx):
+          return [DefaultInfo()]
+
+        def _materializer(ctx):
+          print("MATERIALIZER LABEL " + str(ctx.label))
+          return []
+
+        binary = rule(
+          implementation = _binary_impl,
+          attrs = { "_materialized": attr.label_list(materializer = _materializer) })
+        """);
+
+    scratch.file(
+        "dormant/BUILD",
+        """
+        load(":dormant.bzl", "binary")
+        binary(name="binary")
+        """);
+
+    update("//dormant:binary");
+    assertContainsEvent("MATERIALIZER LABEL @@//dormant:binary");
+  }
 }

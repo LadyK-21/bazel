@@ -401,7 +401,7 @@ def _collect_linking_context(ctx):
 def _get_link_staticness(ctx, cpp_config, force_linkstatic, is_dbg_build):
     if cpp_config.dynamic_mode() == "FULLY":
         return linker_mode.LINKING_DYNAMIC
-    elif cpp_config.dynamic_mode() == "OFF" or ctx.attr.linkstatic or force_linkstatic or is_dbg_build:
+    elif cpp_config.dynamic_mode() == "OFF" or ctx.attr.linkstatic or force_linkstatic:
         return linker_mode.LINKING_STATIC
     else:
         return linker_mode.LINKING_DYNAMIC
@@ -482,9 +482,6 @@ def cc_binary_impl(ctx, additional_linkopts, force_linkstatic = False):
     features = ctx.features
     features.append(linking_mode)
     disabled_features = ctx.disabled_features
-    if ctx.attr._is_test and cpp_config.incompatible_enable_cc_test_feature:
-        features.append("is_cc_test")
-        disabled_features.append("legacy_is_cc_test")
 
     feature_configuration = cc_common.configure_features(
         ctx = ctx,

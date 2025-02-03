@@ -195,7 +195,6 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
   private final String productName;
   private final BuildEventArtifactUploaderFactoryMap buildEventArtifactUploaderFactoryMap;
   private final ActionKeyContext actionKeyContext;
-  private final ImmutableMap<String, AuthHeadersProvider> authHeadersProviderMap;
   @Nullable private final RepositoryRemoteExecutorFactory repositoryRemoteExecutorFactory;
 
   // Workspace state (currently exactly one workspace per server)
@@ -228,7 +227,6 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
       Iterable<BlazeCommand> commands,
       String productName,
       BuildEventArtifactUploaderFactoryMap buildEventArtifactUploaderFactoryMap,
-      ImmutableMap<String, AuthHeadersProvider> authHeadersProviderMap,
       RepositoryRemoteExecutorFactory repositoryRemoteExecutorFactory,
       InstrumentationOutputFactory instrumentationOutputFactory,
       FileSystemLock installBaseLock) {
@@ -258,8 +256,6 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
         new CommandNameCacheImpl(commandMap));
     this.productName = productName;
     this.buildEventArtifactUploaderFactoryMap = buildEventArtifactUploaderFactoryMap;
-    this.authHeadersProviderMap =
-        Preconditions.checkNotNull(authHeadersProviderMap, "authHeadersProviderMap");
     this.repositoryRemoteExecutorFactory = repositoryRemoteExecutorFactory;
     this.instrumentationOutputFactory = instrumentationOutputFactory;
     this.installBaseLock = installBaseLock;
@@ -577,13 +573,12 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
    *
    * @param moduleClass a class or interface that we want to match to a module
    * @param <T> the type of the module's class
-   * @return a module that is an instance of this class or interface
+   * @return a module that is an instance of the given class or interface
    */
-  @SuppressWarnings("unchecked")
   public <T> T getBlazeModule(Class<T> moduleClass) {
     for (BlazeModule module : blazeModules) {
       if (moduleClass.isInstance(module)) {
-        return (T) module;
+        return moduleClass.cast(module);
       }
     }
     return null;
@@ -764,6 +759,15 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
       finalCommandResult = BlazeCommandResult.detailedExitCode(otherThreadWonExitCode);
     }
     env.getBlazeWorkspace().clearEventBus();
+
+    // Some module's commandComplete() relies on the stoppage of profiler. And it is impossible the
+    // profiler is needed after all `BlazeModule.afterCommand`s are executed.
+    // See b/331203854#comment124 for more details.
+    try {
+      Profiler.instance().stop();
+    } catch (IOException e) {
+      env.getReporter().handle(Event.error("Error while writing profile file: " + e.getMessage()));
+    }
 
     for (BlazeModule module : blazeModules) {
       try (SilentCloseable closeable = Profiler.instance().profile(module + ".commandComplete")) {
@@ -1426,6 +1430,9 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
 
     CustomExitCodePublisher.setAbruptExitStatusFileDir(
         serverDirectories.getOutputBase().getPathString());
+    // Delete the previous file, if any, in case this server is reusing an existing output base
+    // from a previous server that had an abrupt exit.
+    CustomExitCodePublisher.maybeDeleteAbruptExitStatusFile();
 
     BlazeDirectories directories =
         new BlazeDirectories(
@@ -1555,11 +1562,6 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
 
   public BuildEventArtifactUploaderFactoryMap getBuildEventArtifactUploaderFactoryMap() {
     return buildEventArtifactUploaderFactoryMap;
-  }
-
-  /** Returns a map of all registered {@link AuthHeadersProvider}s. */
-  public ImmutableMap<String, AuthHeadersProvider> getAuthHeadersProvidersMap() {
-    return authHeadersProviderMap;
   }
 
   public RepositoryRemoteExecutorFactory getRepositoryRemoteExecutorFactory() {
@@ -1703,7 +1705,6 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
               serverBuilder.getCommands(),
               productName,
               serverBuilder.getBuildEventArtifactUploaderMap(),
-              serverBuilder.getAuthHeadersProvidersMap(),
               serverBuilder.getRepositoryRemoteExecutorFactory(),
               serverBuilder.createInstrumentationOutputFactory(),
               installBaseLock);

@@ -1289,7 +1289,6 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
 
         my_rule(
             name = "me",
-            transitive_configs = [":flag"],
         )
         """);
     // Need this so the feature flag actually gone from the configuration.
@@ -1298,7 +1297,7 @@ public class ToolchainResolutionFunctionTest extends ToolchainTestCase {
     assertThat(getConfiguredTarget("//rule:me")).isNull();
     assertContainsEvent(
         "Unrecoverable errors resolving config_setting associated with"
-            + " //strange:strange_test_toolchain: For config_setting flagged, Feature flag"
+            + " //strange:strange_toolchain: For config_setting flagged, Feature flag"
             + " //strange:flag was accessed in a configuration it is not present in.");
   }
 
