@@ -253,7 +253,6 @@ bazel_fragments["CoreOptions"] = fragment(
         "//command_line_option:experimental_writable_outputs",
         "//command_line_option:build_runfile_manifests",
         "//command_line_option:build_runfile_links",
-        "//command_line_option:legacy_external_runfiles",
         "//command_line_option:experimental_remotable_source_manifests",
         "//command_line_option:incompatible_always_include_files_in_data",
         "//command_line_option:experimental_strict_fileset_output",
@@ -345,12 +344,6 @@ bazel_fragments["CppOptions"] = fragment(
         "//command_line_option:linkopt": settings["//command_line_option:host_linkopt"],
         "//command_line_option:strip": "always",
     },
-)
-
-bazel_fragments["GenQueryConfiguration$GenQueryOptions"] = fragment(
-    propagate = [
-        "//command_line_option:experimental_skip_ttvs_for_genquery",
-    ],
 )
 
 def _java_options(settings):
@@ -488,12 +481,6 @@ bazel_fragments["PythonOptions"] = fragment(
 bazel_fragments["ShellConfiguration$Options"] = fragment(
     propagate = [
         "//command_line_option:shell_executable",
-    ],
-)
-
-bazel_fragments["GenQueryConfiguration$GenQueryOptions"] = fragment(
-    propagate = [
-        "//command_line_option:experimental_skip_ttvs_for_genquery",
     ],
 )
 

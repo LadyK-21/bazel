@@ -355,7 +355,6 @@ java_library(
     name = "error_prone_annotations",
     exports = [
         "@maven//:com_google_errorprone_error_prone_annotations",
-        "@maven//:com_google_errorprone_error_prone_type_annotations",
     ],
 )
 
@@ -673,4 +672,17 @@ filegroup(
         "@maven//:junit_junit_file",
         "@maven//:org_hamcrest_hamcrest_core_file",
     ],
+)
+
+java_library(
+    name = "jmh",
+    exported_plugins = [":jmh_benchmark_processor"],
+    exports = ["@maven//:org_openjdk_jmh_jmh_core"],
+)
+
+java_plugin(
+    name = "jmh_benchmark_processor",
+    processor_class = "org.openjdk.jmh.generators.BenchmarkProcessor",
+    visibility = ["//visibility:private"],
+    deps = ["@maven//:org_openjdk_jmh_jmh_generator_annprocess"],
 )

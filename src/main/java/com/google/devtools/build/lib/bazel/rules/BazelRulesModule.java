@@ -333,6 +333,16 @@ public final class BazelRulesModule extends BlazeModule {
         effectTags = {OptionEffectTag.NO_OP},
         help = "No-op.")
     public boolean useSemaphoreForJobs;
+
+    // TODO(b/410585542): Remove this once there are no more internal users trying to set it.
+    @Option(
+        name = "experimental_skip_ttvs_for_genquery",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        metadataTags = {OptionMetadataTag.DEPRECATED},
+        help = "No-op. Will be removed soon.")
+    public boolean skipTtvs;
   }
 
   /** This is where deprecated Bazel-specific options only used by the build command go to die. */
@@ -480,6 +490,14 @@ public final class BazelRulesModule extends BlazeModule {
    * want to graveyard an all-command option specific to Blaze or Bazel, create a subclass.
    */
   public static final class AllCommandGraveyardOptions extends OptionsBase {
+    @Option(
+        name = "legacy_external_runfiles",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op")
+    public boolean legacyExternalRunfiles;
+
     @Option(
         name = "incompatible_disable_target_provider_fields",
         defaultValue = "false",
@@ -662,6 +680,14 @@ public final class BazelRulesModule extends BlazeModule {
         metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
         help = "No-op.")
     public boolean macosSetInstallName;
+
+    @Option(
+        name = "verbose_explanations",
+        defaultValue = "false",
+        documentationCategory = OptionDocumentationCategory.LOGGING,
+        effectTags = {OptionEffectTag.AFFECTS_OUTPUTS},
+        help = "No-op.")
+    public boolean verboseExplanations;
   }
 
   @Override
