@@ -265,39 +265,53 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi {
             // Input files for every test action
             .add(
                 attr("$test_wrapper", LABEL)
-                    .cfg(ExecutionTransitionFactory.createFactory())
+                    .cfg(
+                        ExecutionTransitionFactory.createFactory(
+                            DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                     .singleArtifact()
                     .value(labelCache.get(toolsRepository + "//tools/test:test_wrapper")))
             .add(
                 attr("$xml_writer", LABEL)
-                    .cfg(ExecutionTransitionFactory.createFactory())
+                    .cfg(
+                        ExecutionTransitionFactory.createFactory(
+                            DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                     .singleArtifact()
                     .value(labelCache.get(toolsRepository + "//tools/test:xml_writer")))
             .add(
                 attr("$test_runtime", LABEL_LIST)
-                    .cfg(ExecutionTransitionFactory.createFactory())
+                    .cfg(
+                        ExecutionTransitionFactory.createFactory(
+                            DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                     // Getting this default value through the getTestRuntimeLabelList helper ensures
                     // we reuse the same ImmutableList<Label> instance for each $test_runtime attr.
                     .value(getTestRuntimeLabelList(env)))
             .add(
                 attr("$test_setup_script", LABEL)
-                    .cfg(ExecutionTransitionFactory.createFactory())
+                    .cfg(
+                        ExecutionTransitionFactory.createFactory(
+                            DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                     .singleArtifact()
                     .value(labelCache.get(toolsRepository + "//tools/test:test_setup")))
             .add(
                 attr("$xml_generator_script", LABEL)
-                    .cfg(ExecutionTransitionFactory.createFactory())
+                    .cfg(
+                        ExecutionTransitionFactory.createFactory(
+                            DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                     .singleArtifact()
                     .value(labelCache.get(toolsRepository + "//tools/test:test_xml_generator")))
             .add(
                 attr("$collect_coverage_script", LABEL)
-                    .cfg(ExecutionTransitionFactory.createFactory())
+                    .cfg(
+                        ExecutionTransitionFactory.createFactory(
+                            DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                     .singleArtifact()
                     .value(labelCache.get(toolsRepository + "//tools/test:collect_coverage")))
             // Input files for test actions collecting code coverage
             .add(
                 attr(":coverage_support", LABEL)
-                    .cfg(ExecutionTransitionFactory.createFactory())
+                    .cfg(
+                        ExecutionTransitionFactory.createFactory(
+                            DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                     .value(
                         BaseRuleClasses.coverageSupportAttribute(
                             labelCache.get(
@@ -305,7 +319,9 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi {
             // Used in the one-per-build coverage report generation action.
             .add(
                 attr(":coverage_report_generator", LABEL)
-                    .cfg(ExecutionTransitionFactory.createFactory())
+                    .cfg(
+                        ExecutionTransitionFactory.createFactory(
+                            DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                     .value(
                         BaseRuleClasses.coverageReportGeneratorAttribute(
                             labelCache.get(
@@ -314,7 +330,9 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi {
             // See similar definitions in BaseRuleClasses for context.
             .add(
                 attr(":run_under_exec_config", LABEL)
-                    .cfg(ExecutionTransitionFactory.createFactory("test"))
+                    .cfg(
+                        ExecutionTransitionFactory.createFactory(
+                            DEFAULT_TEST_RUNNER_EXEC_GROUP_NAME))
                     .value(RUN_UNDER_EXEC_CONFIG)
                     .skipPrereqValidatorCheck())
             .add(
@@ -996,15 +1014,6 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi {
         FunctionSplitTransitionAllowlist.ATTRIBUTE_NAME,
         FunctionSplitTransitionAllowlist.LABEL);
 
-    for (Object o : providesArg) {
-      if (!StarlarkAttrModule.isProvider(o)) {
-        throw Starlark.errorf(
-            "Illegal argument: element in 'provides' is of unexpected type. "
-                + "Should be list of providers, but got item of type %s.",
-            Starlark.type(o));
-      }
-    }
-
     if (dependencyResolutionRule) {
       if (!subrules.isEmpty()) {
         throw Starlark.errorf("Rules that can be required for materializers cannot have subrules");
@@ -1028,7 +1037,7 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi {
     }
 
     for (StarlarkProviderIdentifier starlarkProvider :
-        StarlarkAttrModule.getStarlarkProviderIdentifiers(providesArg)) {
+        StarlarkAttrModule.getStarlarkProviderIdentifiers(providesArg, "provides")) {
       builder.advertiseStarlarkProvider(starlarkProvider);
     }
 
@@ -1316,15 +1325,6 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi {
       attributes.add(attribute);
     }
 
-    for (Object o : providesArg) {
-      if (!StarlarkAttrModule.isProvider(o)) {
-        throw Starlark.errorf(
-            "Illegal argument: element in 'provides' is of unexpected type. "
-                + "Should be list of providers, but got item of type %s. ",
-            Starlark.type(o));
-      }
-    }
-
     if (applyToGeneratingRules && !requiredProvidersArg.isEmpty()) {
       throw Starlark.errorf(
           "An aspect cannot simultaneously have required providers and apply to generating rules.");
@@ -1380,7 +1380,7 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi {
         StarlarkAttrModule.buildProviderPredicate(requiredProvidersArg, "required_providers"),
         StarlarkAttrModule.buildProviderPredicate(
             requiredAspectProvidersArg, "required_aspect_providers"),
-        StarlarkAttrModule.getStarlarkProviderIdentifiers(providesArg),
+        StarlarkAttrModule.getStarlarkProviderIdentifiers(providesArg, "provides"),
         requiredParams.build(),
         ImmutableSet.copyOf(Sequence.cast(requiredAspects, StarlarkAspect.class, "requires")),
         propagationPredicate,
@@ -1516,8 +1516,10 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi {
         // isn't too big. Maybe this is unnecessary since we don't permit recursion. But in theory,
         // a big stack can crash under eager evaluation (where evaluation is on the Java call stack)
         // but not deferred evaluation, leading to a semantic difference.
-        MacroClass.executeMacroImplementation(
-            macroInstance, targetDefinitionContext, thread.getSemantics());
+        try (var updater = targetDefinitionContext.updatePausedThreadComputationSteps(thread)) {
+          MacroClass.executeMacroImplementation(
+              macroInstance, targetDefinitionContext, thread.getSemantics());
+        }
       }
 
       return Starlark.NONE;
@@ -1651,7 +1653,7 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi {
       }
       TargetDefinitionContext targetDefinitionContext =
           ruleClass.getWorkspaceOnly()
-              ? Package.Builder.fromOrFailAllowWorkspaceOrModuleExtension(
+              ? Package.Builder.fromOrFailAllowModuleExtension(
                   thread, "a repository rule", "instantiated")
               : TargetDefinitionContext.fromOrFailDisallowWorkspace(
                   thread, "a rule", "instantiated");
@@ -1730,7 +1732,7 @@ public class StarlarkRuleClassFunctions implements StarlarkRuleFunctionsApi {
               Label definitionLabel = currentRuleClass.getRuleDefinitionEnvironmentLabel();
               BuiltinRestriction.failIfLabelOutsideAllowlist(
                   definitionLabel,
-                  RepositoryMapping.ALWAYS_FALLBACK,
+                  RepositoryMapping.EMPTY,
                   ALLOWLIST_RULE_EXTENSION_API_EXPERIMENTAL);
             }
             String nativeName = arg.startsWith("_") ? "$" + arg.substring(1) : arg;

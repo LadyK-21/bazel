@@ -25,7 +25,6 @@ import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.FileArtifactValue;
-import com.google.devtools.build.lib.actions.ForbiddenActionInputException;
 import com.google.devtools.build.lib.actions.InputMetadataProvider;
 import com.google.devtools.build.lib.actions.ResourceManager;
 import com.google.devtools.build.lib.actions.ResourceManager.ResourceHandle;
@@ -149,7 +148,7 @@ final class WorkerSpawnRunner implements SpawnRunner {
 
   @Override
   public SpawnResult exec(Spawn spawn, SpawnExecutionContext context)
-      throws ExecException, IOException, InterruptedException, ForbiddenActionInputException {
+      throws ExecException, IOException, InterruptedException {
     context.report(
         SpawnSchedulingEvent.create(
             WorkerKey.makeWorkerTypeName(
@@ -371,7 +370,7 @@ final class WorkerSpawnRunner implements SpawnRunner {
       List<String> flagFiles,
       InputMetadataProvider inputFileCache,
       SpawnMetrics.Builder spawnMetrics)
-      throws ExecException, ForbiddenActionInputException, IOException, InterruptedException {
+      throws ExecException, IOException, InterruptedException {
     WorkerOwner workerOwner = null;
     WorkResponse response;
     WorkRequest request;
@@ -528,7 +527,8 @@ final class WorkerSpawnRunner implements SpawnRunner {
                 String.format("Worker #%d preparing execution", worker.getWorkerId()))) {
       // We consider `prepareExecution` to be also part of setup.
       Stopwatch prepareExecutionStopwatch = Stopwatch.createStarted();
-      worker.prepareExecution(inputFiles, outputs, key.getWorkerFilesWithDigests().keySet());
+      worker.prepareExecution(
+          inputFiles, outputs, key.getWorkerFilesWithDigests().keySet(), context.getClientEnv());
       initializeMetrics(key, worker);
       spawnMetrics.addSetupTime(prepareExecutionStopwatch.elapsed());
     } catch (IOException e) {
@@ -645,15 +645,18 @@ final class WorkerSpawnRunner implements SpawnRunner {
 
                   w = null;
 
-                } catch (IOException | InterruptedException e2) {
+                } catch (IOException | InterruptedException | UserExecException e2) {
                   // The reaper thread can't do anything useful about this.
                 }
               } finally {
                 if (w != null) {
                   try {
                     resourceHandle.close();
-                  } catch (IOException | InterruptedException | IllegalStateException e) {
-                    // Error while returning worker to the pool. Could not do anythinng.
+                  } catch (IOException
+                      | InterruptedException
+                      | IllegalStateException
+                      | UserExecException e) {
+                    // Error while returning worker to the pool. Could not do anything.
                   }
                 }
               }

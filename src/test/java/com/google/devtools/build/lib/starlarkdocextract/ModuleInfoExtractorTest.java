@@ -82,13 +82,13 @@ public final class ModuleInfoExtractorTest {
   }
 
   private static ModuleInfoExtractor getExtractor() {
-    RepositoryMapping repositoryMapping = RepositoryMapping.ALWAYS_FALLBACK;
+    RepositoryMapping repositoryMapping = RepositoryMapping.EMPTY;
     return new ModuleInfoExtractor(
         name -> true, new LabelRenderer(repositoryMapping, Optional.empty()));
   }
 
   private static ModuleInfoExtractor getExtractor(Predicate<String> isWantedQualifiedName) {
-    RepositoryMapping repositoryMapping = RepositoryMapping.ALWAYS_FALLBACK;
+    RepositoryMapping repositoryMapping = RepositoryMapping.EMPTY;
     return new ModuleInfoExtractor(
         isWantedQualifiedName, new LabelRenderer(repositoryMapping, Optional.empty()));
   }
@@ -685,7 +685,10 @@ public final class ModuleInfoExtractorTest {
   @Test
   public void ruleAttributes() throws Exception {
     Module module =
-        exec(
+        execWithOptions(
+            // TODO(https://github.com/bazelbuild/bazel/issues/6420): attr.license() is deprecated,
+            // and will eventually be removed from Bazel.
+            ImmutableList.of("--noincompatible_no_attr_license"),
             """
             MyInfo1 = provider()
             MyInfo2 = provider()
@@ -702,6 +705,7 @@ public final class ModuleInfoExtractorTest {
                     "c": attr.label(providers = [MyInfo1, MyInfo2]),
                     "d": attr.label(providers = [[MyInfo1, MyInfo2], [MyInfo3]]),
                     "_e": attr.string(doc = "Hidden attribute"),
+                    "deprecated_license": attr.license(),
                 },
             )
             """);
@@ -762,6 +766,12 @@ public final class ModuleInfoExtractorTest {
                                     OriginKey.newBuilder()
                                         .setName("MyInfo3")
                                         .setFile(fakeLabelString)))
+                        .build(),
+                    AttributeInfo.newBuilder()
+                        .setName("deprecated_license")
+                        .setType(AttributeType.STRING_LIST)
+                        .setDefaultValue("[\"none\"]")
+                        .setNonconfigurable(true)
                         .build())
                 .build());
   }
@@ -1126,10 +1136,10 @@ my_macro = macro(
                 attrs = {
                     "label": attr.label(default = "//test:foo"),
                     "label_list": attr.label_list(
-                        default = ["//x", "@canonical//y", "@canonical//y:z"],
+                        default = ["//x", "@@canonical//y", "@@canonical//y:z"],
                     ),
                     "label_keyed_string_dict": attr.label_keyed_string_dict(
-                        default = {"//x": "label_in_main", "@canonical//y": "label_in_dep"},
+                        default = {"//x": "label_in_main", "@@canonical//y": "label_in_dep"},
                     ),
                 },
             )
