@@ -1,4 +1,8 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_java//java:defs.bzl", "java_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//src:release_archive.bzl", "release_archive")
 
 # Description:
@@ -369,6 +373,20 @@ cc_test(
 sh_test(
     name = "zip64_test",
     srcs = ["zip64_test.sh"],
+    args = ["$(JAVABASE)"],
+    data = [
+        ":singlejar",
+        "//src/test/shell:bashunit",
+        "@bazel_tools//tools/bash/runfiles",
+        "@rules_java//toolchains:current_java_runtime",
+    ],
+    toolchains = ["@rules_java//toolchains:current_java_runtime"],
+    deps = ["//src/test/shell:bashunit"],
+)
+
+sh_test(
+    name = "zip64_huge_entry_test",
+    srcs = ["zip64_huge_entry_test.sh"],
     args = ["$(JAVABASE)"],
     data = [
         ":singlejar",

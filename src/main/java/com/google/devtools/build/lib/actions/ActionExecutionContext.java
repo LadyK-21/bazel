@@ -119,11 +119,6 @@ public class ActionExecutionContext implements Closeable, ActionContext.ActionCo
     }
 
     @Override
-    public boolean isLegacyExternalRunfiles() {
-      return wrapped.isLegacyExternalRunfiles();
-    }
-
-    @Override
     public boolean isMappingCached() {
       return wrapped.isMappingCached();
     }
@@ -208,12 +203,6 @@ public class ActionExecutionContext implements Closeable, ActionContext.ActionCo
     public ImmutableList<RunfilesTree> getRunfilesTrees() {
       return ImmutableList.of(overriddenTree);
     }
-
-    @Override
-    public FileSystem getFileSystemForInputResolution() {
-      return wrapped.getFileSystemForInputResolution();
-    }
-
   }
 
   /** Enum for --subcommands flag */

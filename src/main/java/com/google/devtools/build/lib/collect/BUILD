@@ -83,7 +83,17 @@ java_library(
     name = "path_fragment_prefix_trie",
     srcs = ["PathFragmentPrefixTrie.java"],
     deps = [
-        "//src/main/java/com/google/devtools/build/lib/concurrent",
+        "//src/main/java/com/google/devtools/build/lib/concurrent:thread_safety",
+        "//src/main/java/com/google/devtools/build/lib/vfs:pathfragment",
+        "//third_party:guava",
+    ],
+)
+
+java_library(
+    name = "simple_target_pattern_matcher",
+    srcs = ["SimpleTargetPatternMatcher.java"],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib/cmdline",
         "//src/main/java/com/google/devtools/build/lib/vfs:pathfragment",
         "//third_party:guava",
     ],
