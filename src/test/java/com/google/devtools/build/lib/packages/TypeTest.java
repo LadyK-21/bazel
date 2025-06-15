@@ -43,8 +43,7 @@ import org.junit.runners.JUnit4;
 public class TypeTest {
 
   private final LabelConverter labelConverter =
-      new LabelConverter(
-          PackageIdentifier.createInMainRepo("quux"), RepositoryMapping.ALWAYS_FALLBACK);
+      new LabelConverter(PackageIdentifier.createInMainRepo("quux"), RepositoryMapping.EMPTY);
 
   @Test
   public void testInteger() throws Exception {
@@ -199,10 +198,13 @@ public class TypeTest {
     assertThrows(
         UnsupportedOperationException.class,
         () -> BuildType.TRISTATE.toTagSet(TriState.AUTO, "some_tristate"));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> BuildType.LICENSE.toTagSet(License.NO_LICENSE, "output_license"));
   }
 
   @Test
-  public void testIllegalTagConversionFromNullOnSupportedType() {
+  public void testIllegalTagConversIonFromNullOnSupportedType() {
     assertThrows(IllegalStateException.class, () -> Type.BOOLEAN.toTagSet(null, "a_boolean"));
   }
 

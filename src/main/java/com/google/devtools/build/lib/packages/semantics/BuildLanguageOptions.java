@@ -149,7 +149,7 @@ public final class BuildLanguageOptions extends OptionsBase {
 
   @Option(
       name = "incompatible_disable_autoloads_in_main_repo",
-      defaultValue = "false",
+      defaultValue = "true",
       documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
       effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
       metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
@@ -211,6 +211,15 @@ public final class BuildLanguageOptions extends OptionsBase {
           "If enabled, the register_toolchain function may not include target patterns which may "
               + "refer to more than one package.")
   public boolean experimentalSinglePackageToolchainBinding;
+
+  @Option(
+      name = "allow_experimental_loads",
+      documentationCategory = OptionDocumentationCategory.INPUT_STRICTNESS,
+      effectTags = {OptionEffectTag.BUILD_FILE_SEMANTICS},
+      defaultValue = "false",
+      help =
+          "If enabled, issue only a warning instead of an error for loads of experimental .bzls.")
+  public boolean allowExperimentalLoads;
 
   @Option(
       name = "check_bzl_visibility",
@@ -809,6 +818,15 @@ public final class BuildLanguageOptions extends OptionsBase {
               + " files which are not UTF-8 encoded can cause Bazel to behave inconsistently.")
   public Utf8EnforcementMode incompatibleEnforceStarlarkUtf8;
 
+  @Option(
+      name = "experimental_repository_ctx_execute_wasm",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      help = "If true enables the repository_ctx `load_wasm` and `execute_wasm` methods.")
+  public boolean repositoryCtxExecuteWasm;
+
   /**
    * An interner to reduce the number of StarlarkSemantics instances. A single Blaze instance should
    * never accumulate a large number of these and being able to shortcut on object identity makes a
@@ -834,6 +852,7 @@ public final class BuildLanguageOptions extends OptionsBase {
             .setBool(EXPERIMENTAL_BUILTINS_DUMMY, experimentalBuiltinsDummy)
             .set(EXPERIMENTAL_BUILTINS_INJECTION_OVERRIDE, experimentalBuiltinsInjectionOverride)
             .setBool(EXPERIMENTAL_BZL_VISIBILITY, experimentalBzlVisibility)
+            .setBool(ALLOW_EXPERIMENTAL_LOADS, allowExperimentalLoads)
             .setBool(CHECK_BZL_VISIBILITY, checkBzlVisibility)
             .setBool(
                 EXPERIMENTAL_ENABLE_ANDROID_MIGRATION_APIS, experimentalEnableAndroidMigrationApis)
@@ -917,6 +936,7 @@ public final class BuildLanguageOptions extends OptionsBase {
             .setBool(
                 StarlarkSemantics.INTERNAL_BAZEL_ONLY_UTF_8_BYTE_STRINGS,
                 internalStarlarkUtf8ByteStrings)
+            .setBool(EXPERIMENTAL_REPOSITORY_CTX_EXECUTE_WASM, repositoryCtxExecuteWasm)
             .build();
     return INTERNER.intern(semantics);
   }
@@ -933,11 +953,12 @@ public final class BuildLanguageOptions extends OptionsBase {
   public static final String INCOMPATIBLE_STOP_EXPORTING_LANGUAGE_MODULES =
       "-incompatible_stop_exporting_language_modules";
   public static final String INCOMPATIBLE_DISABLE_AUTOLOADS_IN_MAIN_REPO =
-      "-incompatible_disable_autoloads_in_main_repo";
+      "+incompatible_disable_autoloads_in_main_repo";
   public static final String INCOMPATIBLE_ALLOW_TAGS_PROPAGATION =
       "+incompatible_allow_tags_propagation";
   public static final String EXPERIMENTAL_BUILTINS_DUMMY = "-experimental_builtins_dummy";
   public static final String EXPERIMENTAL_BZL_VISIBILITY = "+experimental_bzl_visibility";
+  public static final String ALLOW_EXPERIMENTAL_LOADS = "-allow_experimental_loads";
   public static final String CHECK_BZL_VISIBILITY = "+check_bzl_visibility";
   public static final String EXPERIMENTAL_CC_SHARED_LIBRARY = "-experimental_cc_shared_library";
   public static final String EXPERIMENTAL_CC_STATIC_LIBRARY = "-experimental_cc_static_library";
@@ -950,8 +971,6 @@ public final class BuildLanguageOptions extends OptionsBase {
   public static final String EXPERIMENTAL_ENABLE_FIRST_CLASS_MACROS =
       "+experimental_enable_first_class_macros";
   public static final String EXPERIMENTAL_ENABLE_SCL_DIALECT = "+experimental_enable_scl_dialect";
-  public static final String ENABLE_BZLMOD = "+enable_bzlmod";
-  public static final String ENABLE_WORKSPACE = "-enable_workspace";
   public static final String EXPERIMENTAL_ISOLATED_EXTENSION_USAGES =
       "-experimental_isolated_extension_usages";
   public static final String INCOMPATIBLE_NO_IMPLICIT_WATCH_LABEL =
@@ -1019,6 +1038,8 @@ public final class BuildLanguageOptions extends OptionsBase {
       "+incompatible_simplify_unconditional_selects_in_rule_attrs";
   public static final String INCOMPATIBLE_LOCATIONS_PREFERS_EXECUTABLE =
       "+incompatible_locations_prefers_executable";
+  public static final String EXPERIMENTAL_REPOSITORY_CTX_EXECUTE_WASM =
+      "-experimental_repository_ctx_execute_wasm";
   // non-booleans
   public static final StarlarkSemantics.Key<String> EXPERIMENTAL_BUILTINS_BZL_PATH =
       new StarlarkSemantics.Key<>("experimental_builtins_bzl_path", "%bundled%");
