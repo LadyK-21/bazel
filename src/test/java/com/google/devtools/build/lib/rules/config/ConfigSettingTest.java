@@ -14,17 +14,20 @@
 package com.google.devtools.build.lib.rules.config;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.devtools.build.lib.packages.Types.STRING_LIST;
 
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.ConfigMatchingProvider;
+import com.google.devtools.build.lib.analysis.config.ConfigMatchingProvider.MatchResult.Match;
+import com.google.devtools.build.lib.analysis.config.ConfigMatchingProvider.MatchResult.NoMatch;
 import com.google.devtools.build.lib.analysis.config.Fragment;
 import com.google.devtools.build.lib.analysis.config.FragmentOptions;
 import com.google.devtools.build.lib.analysis.config.RequiresOptions;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
+import com.google.devtools.build.lib.packages.BuildType;
+import com.google.devtools.build.lib.packages.License.LicenseType;
 import com.google.devtools.build.lib.packages.RawAttributeMapper;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.testutil.TestRuleClassProvider;
@@ -35,7 +38,6 @@ import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionMetadataTag;
 import com.google.testing.junit.testparameterinjector.TestParameterInjector;
 import com.google.testing.junit.testparameterinjector.TestParameters;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.junit.Test;
@@ -65,6 +67,14 @@ public class ConfigSettingTest extends BuildViewTestCase {
         documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
         effectTags = {OptionEffectTag.NO_OP})
     public List<String> allowMultipleOption;
+
+    @Option(
+        name = "new_option_name",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        defaultValue = "",
+        oldName = "old_option_name")
+    public String optionWithOldName;
   }
 
   /** Test fragment. */
@@ -108,11 +118,10 @@ public class ConfigSettingTest extends BuildViewTestCase {
     return getConfiguredTarget(label).getProvider(ConfigMatchingProvider.class);
   }
 
-  private boolean forceConvertMatchResult(ConfigMatchingProvider.MatchResult result)
-      throws Exception {
-    if (result.equals(ConfigMatchingProvider.MatchResult.MATCH)) {
+  private boolean forceConvertMatchResult(ConfigMatchingProvider.MatchResult result) {
+    if (result instanceof Match) {
       return true;
-    } else if (result.equals(ConfigMatchingProvider.MatchResult.NOMATCH)) {
+    } else if (result instanceof NoMatch) {
       return false;
     }
     throw new IllegalStateException("Unexpected MatchResult: " + result);
@@ -210,6 +219,20 @@ public class ConfigSettingTest extends BuildViewTestCase {
         "config_setting(",
         "    name = 'badoption',",
         "    values = {'internal_option': 'bar'})");
+  }
+
+  @Test
+  public void oldNameReference() throws Exception {
+    scratch.file(
+        "test/BUILD",
+        """
+        config_setting(
+            name = "match",
+            values = {"old_option_name": "foo"},
+        )
+        """);
+    assertThat(getConfiguredTarget("//test:match")).isNotNull();
+    assertNoEvents();
   }
 
   /**
@@ -467,9 +490,41 @@ public class ConfigSettingTest extends BuildViewTestCase {
     assertThat(getConfigMatchingProviderResultAsBoolean("//test:match")).isEqualTo(matchExpected);
   }
 
+  @Test
+  public void flagWithOldName_NoMatch() throws Exception {
+    scratch.file(
+        "test/BUILD",
+        """
+        config_setting(
+            name = "match",
+            values = {
+                "old_option_name": "different_setting",
+            },
+        )
+        """);
+    useConfiguration("--new_option_name=is_set");
+    assertThat(getConfigMatchingProviderResultAsBoolean("//test:match")).isFalse();
+  }
+
+  @Test
+  public void flagWithOldName_Match() throws Exception {
+    scratch.file(
+        "test/BUILD",
+        """
+        config_setting(
+            name = "match",
+            values = {
+                "old_option_name": "is_set",
+            },
+        )
+        """);
+    useConfiguration("--new_option_name=is_set");
+    assertThat(getConfigMatchingProviderResultAsBoolean("//test:match")).isTrue();
+  }
+
   /**
    * Tests multi-value flags that don't support multiple values <b></b>in the same instance<b>. See
-   * comments on {@link #multiValueListMultipleExpectedValues()} for details.
+   * comments on {@link #multiValueListMultipleExpectedValues(List, boolean)} for details.
    */
   @Test
   public void multiValueListSingleValueThatLooksLikeMultiple() throws Exception {
@@ -2531,22 +2586,14 @@ public class ConfigSettingTest extends BuildViewTestCase {
         ")");
   }
 
-  private Set<String> getLicenses(String label) throws Exception {
+  private Set<LicenseType> getLicenses(String label) throws Exception {
     Rule rule = (Rule) getTarget(label);
     // There are two interfaces for retrieving a rule's license: from the Rule object and by
     // directly reading the "licenses" attribute. For config_setting both of these should always
     // be NONE. This method checks consistency between them.
-    List<String> licenseFromRule = rule.getLicense();
-    List<String> licenseFromAttribute = RawAttributeMapper.of(rule).get("licenses", STRING_LIST);
-    if (licenseFromRule == null) {
-      if (licenseFromAttribute != null) {
-        assertThat(licenseFromAttribute).isEmpty();
-      }
-      return new HashSet<>();
-    }
-    assertThat(licenseFromAttribute).isNotNull();
-    Set<String> fromRule = new HashSet<>(licenseFromRule);
-    Set<String> fromAttribute = new HashSet<>(licenseFromAttribute);
+    Set<LicenseType> fromRule = rule.getLicense().getLicenseTypes();
+    Set<LicenseType> fromAttribute =
+        RawAttributeMapper.of(rule).get("licenses", BuildType.LICENSE).getLicenseTypes();
     assertThat(fromRule).containsExactlyElementsIn(fromAttribute);
     return fromRule;
   }
@@ -2566,7 +2613,7 @@ public class ConfigSettingTest extends BuildViewTestCase {
         """);
 
     useConfiguration("--copt", "-Dfoo");
-    assertThat(getLicenses("//test:match")).isEmpty();
+    assertThat(getLicenses("//test:match")).containsExactly(LicenseType.NONE);
   }
 
   /** Tests that third-party doesn't require a license from config_setting. */
@@ -2584,7 +2631,7 @@ public class ConfigSettingTest extends BuildViewTestCase {
         """);
 
     useConfiguration("--copt", "-Dfoo");
-    assertThat(getLicenses("//third_party/test:match")).isEmpty();
+    assertThat(getLicenses("//third_party/test:match")).containsExactly(LicenseType.NONE);
   }
 
   /** Tests that package-wide licenses are ignored by config_setting. */
@@ -2604,7 +2651,7 @@ public class ConfigSettingTest extends BuildViewTestCase {
         """);
 
     useConfiguration("--copt", "-Dfoo");
-    assertThat(getLicenses("//test:match")).isEmpty();
+    assertThat(getLicenses("//test:match")).containsExactly(LicenseType.NONE);
   }
 
   /** Tests that rule-specific licenses are ignored by config_setting. */
@@ -2623,9 +2670,8 @@ public class ConfigSettingTest extends BuildViewTestCase {
         """);
 
     useConfiguration("--copt", "-Dfoo");
-    assertThat(getLicenses("//test:match")).isEmpty();
+    assertThat(getLicenses("//test:match")).containsExactly(LicenseType.NONE);
   }
-
 
   @Test
   public void aliasedStarlarkFlag() throws Exception {
@@ -2664,7 +2710,7 @@ public class ConfigSettingTest extends BuildViewTestCase {
 
     // Expect config_setting on an alias to pass completely through the alias to the underlying
     // flag it references. This means aliases model which flags trigger config_setting matches. This
-    // keeps config_setting in sync with actual builds: if someone builds with --//foo:alias=1,
+    // keeps config_seting in sync with actual builds: if someone builds with --//foo:alias=1,
     // both the user and config_setting interpret it the same way even when the underlying flag
     // changes.
     useConfiguration("--//test:flag=specified");
@@ -2985,5 +3031,46 @@ public class ConfigSettingTest extends BuildViewTestCase {
         "in values attribute of config_setting rule //test:match: error while parsing configuration"
             + " settings: select() on %s is not allowed. Use platform constraints instead"
                 .formatted(flag));
+  }
+
+  @Test
+  // If --foo has oldName --old_foo, let disabling flag selection have fine-grained control over
+  // which name is permitted. For example, if we want to force all config_settings to use the
+  // new name, we could set --incompatible_disable-select_on=old_foo.
+  @TestParameters({
+    "{configSettingName: new_option_name, disabledName: new_option_name, expectSuccess:"
+        + " false}",
+    "{configSettingName: old_option_name, disabledName: old_option_name,"
+        + " expectSuccess: false}",
+    "{configSettingName: new_option_name, disabledName: old_option_name," + " expectSuccess: true}",
+    "{configSettingName: old_option_name, disabledName: new_option_name," + " expectSuccess: true}",
+  })
+  public void selectOnDisabledFlagwithOldName(
+      String configSettingName, String disabledName, boolean expectSuccess) throws Exception {
+    scratch.file(
+        "test/BUILD",
+        """
+        config_setting(
+            name = "match",
+            values = {
+              "%s": "//foo",
+            },
+        )
+        """
+            .formatted(configSettingName));
+    useConfiguration("--incompatible_disable_select_on=%s".formatted(disabledName));
+    reporter.removeHandler(failFastHandler);
+
+    if (expectSuccess) {
+      assertThat(getConfiguredTarget("//test:match")).isNotNull();
+      assertNoEvents();
+    } else {
+      assertThat(getConfiguredTarget("//test:match")).isNull();
+      assertContainsEvent(
+          "in values attribute of config_setting rule //test:match: error while parsing"
+              + " configuration"
+              + " settings: select() on %s is not allowed. Use platform constraints instead"
+                  .formatted(disabledName));
+    }
   }
 }

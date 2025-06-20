@@ -47,6 +47,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.RepositoryMapping;
 import com.google.devtools.build.lib.exec.util.FakeActionInputFileCache;
 import com.google.devtools.build.lib.skyframe.TreeArtifactValue;
+import com.google.devtools.build.lib.skyframe.serialization.testutils.RoundTripping;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.vfs.DigestHashFunction;
 import com.google.devtools.build.lib.vfs.Path;
@@ -110,8 +111,16 @@ public final class StarlarkCustomCommandLineTest {
             .add("one")
             .add("two")
             .add("three")
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(commandLine, "one", "two", "three");
+  }
+
+  @Test
+  public void serializationWithFormattedArgumentsWorks() throws Exception {
+    CommandLine original =
+        builder.addFormatted("value", "key=%s").build(false, RepositoryMapping.EMPTY);
+    CommandLine deserialized = RoundTripping.roundTrip(original);
+    verifyCommandLine(deserialized, "key=value");
   }
 
   @Test
@@ -121,7 +130,7 @@ public final class StarlarkCustomCommandLineTest {
             .add(artifact1)
             .add(artifact2)
             .add(artifact3)
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(
         commandLine,
         "bazel-out/k8-fastbuild/bin/pkg/artifact1",
@@ -141,7 +150,7 @@ public final class StarlarkCustomCommandLineTest {
             .addFormatted("one", "--arg1=%s")
             .addFormatted("two", "--arg2=%s")
             .addFormatted("three", "--arg3=%s")
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(commandLine, "--arg1=one", "--arg2=two", "--arg3=three");
   }
 
@@ -152,7 +161,7 @@ public final class StarlarkCustomCommandLineTest {
             .addFormatted(artifact1, "--arg1=%s")
             .addFormatted(artifact2, "--arg2=%s")
             .addFormatted(artifact3, "--arg3=%s")
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(
         commandLine,
         "--arg1=bazel-out/k8-fastbuild/bin/pkg/artifact1",
@@ -171,7 +180,7 @@ public final class StarlarkCustomCommandLineTest {
         builder
             .add(vectorArg("one", "two", "three").setArgName("--arg"))
             .add(vectorArg("four").setArgName("--other_arg"))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(commandLine, "--arg", "one", "two", "three", "--other_arg", "four");
   }
 
@@ -181,7 +190,7 @@ public final class StarlarkCustomCommandLineTest {
         builder
             .add(vectorArg("one", "two", "three").setTerminateWith("end1"))
             .add(vectorArg("four").setTerminateWith("end2"))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(commandLine, "one", "two", "three", "end1", "four", "end2");
   }
 
@@ -191,7 +200,7 @@ public final class StarlarkCustomCommandLineTest {
         builder
             .add(vectorArg("one", "two", "three").setFormatEach("--arg=%s"))
             .add(vectorArg("four").setFormatEach("--other_arg=%s"))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(commandLine, "--arg=one", "--arg=two", "--arg=three", "--other_arg=four");
   }
 
@@ -200,7 +209,7 @@ public final class StarlarkCustomCommandLineTest {
     CommandLine commandLine =
         builder
             .add(vectorArg(artifact1, artifact2, artifact3).setFormatEach("--arg=%s"))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(
         commandLine,
         "--arg=bazel-out/k8-fastbuild/bin/pkg/artifact1",
@@ -219,7 +228,7 @@ public final class StarlarkCustomCommandLineTest {
         builder
             .add(vectorArg("one", "two", "three").setBeforeEach("b4"))
             .add(vectorArg("four").setBeforeEach("and"))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(commandLine, "b4", "one", "b4", "two", "b4", "three", "and", "four");
   }
 
@@ -229,7 +238,7 @@ public final class StarlarkCustomCommandLineTest {
         builder
             .add(vectorArg(artifact1, artifact2, artifact3).setBeforeEach("b4"))
             .add(vectorArg(artifact3).setBeforeEach("and"))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(
         commandLine,
         "b4",
@@ -258,7 +267,7 @@ public final class StarlarkCustomCommandLineTest {
         builder
             .add(vectorArg("one", "two", "three").setJoinWith("..."))
             .add(vectorArg("four").setJoinWith("n/a"))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(commandLine, "one...two...three", "four");
   }
 
@@ -268,7 +277,7 @@ public final class StarlarkCustomCommandLineTest {
         builder
             .add(vectorArg(artifact1, artifact2, artifact3).setJoinWith("..."))
             .add(vectorArg(artifact3).setJoinWith("..."))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(
         commandLine,
         "bazel-out/k8-fastbuild/bin/pkg/artifact1...bazel-out/k8-opt/bin/pkg/artifact2...bazel-out/k8-opt/bin/artifact3",
@@ -285,7 +294,7 @@ public final class StarlarkCustomCommandLineTest {
         builder
             .add(vectorArg("one", "two", "three").setJoinWith("...").setFormatJoined("--arg=%s"))
             .add(vectorArg("four").setJoinWith("n/a").setFormatJoined("--other_arg=%s"))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(commandLine, "--arg=one...two...three", "--other_arg=four");
   }
 
@@ -298,7 +307,7 @@ public final class StarlarkCustomCommandLineTest {
                     .setJoinWith("...")
                     .setFormatJoined("--arg=%s"))
             .add(vectorArg(artifact3).setJoinWith("...").setFormatJoined("--other_arg=%s"))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(
         commandLine,
         "--arg=bazel-out/k8-fastbuild/bin/pkg/artifact1...bazel-out/k8-opt/bin/pkg/artifact2...bazel-out/k8-opt/bin/artifact3",
@@ -316,7 +325,7 @@ public final class StarlarkCustomCommandLineTest {
             .add("before")
             .add(vectorArg().omitIfEmpty(true).setJoinWith(",").setFormatJoined("--empty=%s"))
             .add("after")
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(commandLine, "before", "after");
   }
 
@@ -327,7 +336,7 @@ public final class StarlarkCustomCommandLineTest {
             .add("before")
             .add(vectorArg().omitIfEmpty(false).setJoinWith(",").setFormatJoined("--empty=%s"))
             .add("after")
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(commandLine, "before", "--empty=", "after");
   }
 
@@ -346,7 +355,7 @@ public final class StarlarkCustomCommandLineTest {
                         artifact2.getExecPathString(),
                         artifact3.getExecPathString())
                     .uniquify(true))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     verifyCommandLine(
         commandLine,
         "bazel-out/k8-fastbuild/bin/pkg/artifact1",
@@ -375,7 +384,7 @@ public final class StarlarkCustomCommandLineTest {
             .add("single_arg")
             .recordArgStart()
             .add(vectorArg("", "line", "four", "has", "no").setTerminateWith("flag"))
-            .build(/* flagPerLine= */ true, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ true, RepositoryMapping.EMPTY);
     verifyCommandLine(
         commandLine,
         "--this=is line one",
@@ -397,7 +406,7 @@ public final class StarlarkCustomCommandLineTest {
             .add("single_arg")
             .recordArgStart()
             .add(vectorArg("", artifact1, artifact2, artifact3).setTerminateWith("flag"))
-            .build(/* flagPerLine= */ true, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ true, RepositoryMapping.EMPTY);
     verifyCommandLine(
         commandLine,
         "--this=bazel-out/k8-fastbuild/bin/pkg/artifact1 bazel-out/k8-opt/bin/pkg/artifact2"
@@ -424,7 +433,7 @@ public final class StarlarkCustomCommandLineTest {
     CommandLine commandLine =
         builder
             .add(vectorArg(tree).setExpandDirectories(true))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
 
     CommandLineExpansionException e =
         assertThrows(
@@ -439,7 +448,7 @@ public final class StarlarkCustomCommandLineTest {
     CommandLine commandLine =
         builder
             .add(vectorArg(fileset).setExpandDirectories(true))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     FilesetOutputSymlink symlink1 = createFilesetSymlink("file1");
     FilesetOutputSymlink symlink2 = createFilesetSymlink("file2");
     ActionKeyContext actionKeyContext = new ActionKeyContext();
@@ -467,7 +476,7 @@ public final class StarlarkCustomCommandLineTest {
     CommandLine commandLine =
         builder
             .add(vectorArg(tree).setExpandDirectories(true))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
 
     ActionKeyContext actionKeyContext = new ActionKeyContext();
     FakeActionInputFileCache fakeActionInputFileCache = new FakeActionInputFileCache();
@@ -485,7 +494,7 @@ public final class StarlarkCustomCommandLineTest {
     CommandLine commandLine =
         builder
             .add(vectorArg(fileset).setExpandDirectories(true))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     ActionKeyContext actionKeyContext = new ActionKeyContext();
     Fingerprint fingerprint = new Fingerprint();
 
@@ -517,7 +526,7 @@ public final class StarlarkCustomCommandLineTest {
     CommandLine commandLine =
         builder
             .add(vectorArg(tree).setExpandDirectories(true))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     Iterable<String> arguments = commandLine.arguments(fakeActionInputFileCache, PathMapper.NOOP);
     assertThat(arguments).containsExactly("bin/tree/child1", "bin/tree/child2");
   }
@@ -535,7 +544,7 @@ public final class StarlarkCustomCommandLineTest {
     CommandLine commandLine =
         builder
             .add(vectorArg(fileset).setExpandDirectories(true))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
     Iterable<String> arguments = commandLine.arguments(fakeActionInputFileCache, PathMapper.NOOP);
 
     assertThat(arguments).containsExactly("bin/fileset/file1", "bin/fileset/file2");
@@ -547,7 +556,7 @@ public final class StarlarkCustomCommandLineTest {
     CommandLine commandLine =
         builder
             .add(vectorArg(tree).setExpandDirectories(true))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
 
     assertThrows(
         CommandLineExpansionException.class,
@@ -571,7 +580,7 @@ public final class StarlarkCustomCommandLineTest {
                                   expander.expand(x)
                                 map_each
                                 """)))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
 
     CommandLineExpansionException e =
         assertThrows(
@@ -586,7 +595,7 @@ public final class StarlarkCustomCommandLineTest {
     CommandLine commandLine =
         builder
             .add(vectorArg(fileset).setExpandDirectories(true))
-            .build(/* flagPerLine= */ false, RepositoryMapping.ALWAYS_FALLBACK);
+            .build(/* flagPerLine= */ false, RepositoryMapping.EMPTY);
 
     assertThrows(
         CommandLineExpansionException.class,
@@ -658,7 +667,7 @@ public final class StarlarkCustomCommandLineTest {
               BazelModuleContext.create(
                   BazelModuleKey.createFakeModuleKeyForTesting(
                       Label.parseCanonicalUnchecked("//test:label")),
-                  RepositoryMapping.ALWAYS_FALLBACK,
+                  RepositoryMapping.EMPTY,
                   "test/label.bzl",
                   /* loads= */ ImmutableList.of(),
                   /* bzlTransitiveDigest= */ new byte[0])),
